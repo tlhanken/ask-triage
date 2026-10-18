@@ -13,7 +13,7 @@
 const ENDPOINT = "/__data";
 
 export interface SaveResult {
-  where: "file" | "browser" | "none";
+  where: "file" | "browser" | "none" | "refused";
   message: string;
 }
 
@@ -61,6 +61,18 @@ export async function saveToFile(json: string): Promise<SaveResult> {
       body: json,
     });
     if (r.ok) return { where: "file", message: "saved to data/register.json" };
+
+    // The endpoint answered and said no. Do NOT fall through to the picker: the
+    // server is there, the write was rejected, and pretending otherwise is how a
+    // refusal turns into a silent loss.
+    let why = `not saved (HTTP ${r.status})`;
+    try {
+      const body = (await r.json()) as { reason?: string };
+      if (body?.reason) why = body.reason;
+    } catch {
+      /* keep the status code */
+    }
+    return { where: "refused", message: why };
   } catch {
     /* no server — try the picker */
   }

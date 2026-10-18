@@ -27,7 +27,7 @@ export default function App() {
   const [creating, setCreating] = useState(false);
   const [editingSprint, setEditingSprint] = useState<string | null>(null);
   const [fileMode, setFileMode] = useState(false);
-  const [status, setStatus] = useState("saved in this browser");
+  const [status, setStatus] = useState("this browser only");
 
   /** Every mutation goes through here, so every change is labelled and revertible.
    *  `op` describes the action in a form the board can query later. */
@@ -43,7 +43,11 @@ export default function App() {
       const available = await fileEndpointAvailable();
       if (cancelled) return;
       setFileMode(available);
-      if (!available) return;
+      if (!available) {
+        setStatus("this browser only — no file endpoint, so nothing is written to data/register.json");
+        return;
+      }
+      setStatus("writing to data/register.json");
       const raw = await loadFromEndpoint();
       if (cancelled || !raw) return;
       try {
@@ -65,7 +69,8 @@ export default function App() {
   useEffect(() => {
     if (!fileMode) return;
     const t = window.setTimeout(() => {
-      saveToFile(JSON.stringify(store)).then((r) => setStatus(r.message));
+      void saveToFile(JSON.stringify(store)).then((r) =>
+        setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
     }, 600);
     return () => window.clearTimeout(t);
   }, [store, fileMode]);
@@ -141,7 +146,10 @@ export default function App() {
           <History
             store={store}
             onRevert={(i) => act("revert", (cur) => revertTo(cur, i))}
-            onSaveFile={() => { saveToFile(JSON.stringify(store)).then((r) => setStatus(r.message)); }}
+            onSaveFile={() => {
+              void saveToFile(JSON.stringify(store)).then((r) =>
+                setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
+            }}
             onLoadFile={loadFromFile}
             onDownload={() => downloadJson("register.json", JSON.stringify(store, null, 2))}
             fileMode={fileMode}
