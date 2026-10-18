@@ -29,11 +29,20 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
   const set = <K extends keyof Omit<Ticket, "id">>(k: K, v: Omit<Ticket, "id">[K]) =>
     setD((cur) => ({ ...cur, [k]: v }));
 
-  const toggleProject = (p: ProjectId) =>
-    setD((cur) => ({
-      ...cur,
-      projects: cur.projects.includes(p) ? cur.projects.filter((x) => x !== p) : [...cur.projects, p],
-    }));
+  // Projects come from a fixed list, so the input FILTERS the list rather than
+  // inventing entries: type to narrow, click to attach.
+  const [projectQuery, setProjectQuery] = useState("");
+  const matches = PROJECTS.filter(
+    (p) => !d.projects.includes(p) && p.toLowerCase().includes(projectQuery.trim().toLowerCase()),
+  );
+
+  const addProject = (p: ProjectId) => {
+    setD((cur) => (cur.projects.includes(p) ? cur : { ...cur, projects: [...cur.projects, p] }));
+    setProjectQuery("");
+  };
+
+  const removeProject = (p: ProjectId) =>
+    setD((cur) => ({ ...cur, projects: cur.projects.filter((x) => x !== p) }));
 
   const submit = () => {
     const draft: Omit<Ticket, "id"> = {
@@ -70,13 +79,34 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
 
           <div className="wide">
             <div className="flabel">Relevant projects</div>
+            {d.projects.length > 0 && (
+              <div className="chips">
+                {d.projects.map((p) => (
+                  <button key={p} type="button" className="chip on" title="click to remove"
+                          onClick={() => removeProject(p)}>{p} ✕</button>
+                ))}
+              </div>
+            )}
+            <input className="proj-filter" value={projectQuery}
+                   onChange={(e) => setProjectQuery(e.target.value)}
+                   onKeyDown={(e) => {
+                     if (e.key === "Enter" && matches.length > 0) { e.preventDefault(); addProject(matches[0]); }
+                     if (e.key === "Escape") setProjectQuery("");
+                   }}
+                   placeholder={d.projects.length ? "Type to add another project…" : "Type to filter projects…"} />
             <div className="chips">
-              {PROJECTS.map((p) => (
-                <button key={p} type="button"
-                        className={"chip " + (d.projects.includes(p) ? "on" : "")}
-                        onClick={() => toggleProject(p)}>{p}</button>
+              {matches.map((p) => (
+                <button key={p} type="button" className="chip"
+                        onClick={() => addProject(p)}>{p}</button>
               ))}
             </div>
+            {matches.length === 0 && (
+              <div className="dim small">
+                {projectQuery.trim()
+                  ? `No project matches “${projectQuery.trim()}” — the list is fixed`
+                  : "Every project already attached"}
+              </div>
+            )}
           </div>
 
           <label className="wide">External ticket link

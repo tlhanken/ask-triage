@@ -197,6 +197,7 @@ tr.clickable { cursor: pointer; }
   border-radius: 8px; padding: 8px 9px; font: inherit; font-size: 13px;
 }
 .flabel { color: var(--dim); font-size: 12px; margin-bottom: 6px; }
+.proj-filter { margin-top: 8px; }
 .stamped { border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 6px; }
 .tier {
   border: 1px solid var(--line); border-radius: 10px;
