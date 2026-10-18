@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  type Ticket, DEFAULT_SETTINGS, backlog, computeFlags, derive, externalLabel, forProject, inSprint,
-  queueHealth, scoreTicket,
+  type Ticket, DEFAULT_SETTINGS, backlog, computeFlags, derive, externalLabel, findSprint, forProject,
+  inSprint, isFrozen, parseDate, queueHealth, scoreTicket, sprintNames,
 } from "./schema";
 import {
   HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, freshStore,
-  moveTicketToSprint, optimizePlan, recordDecision, removeSprint, revertTo, shiftSprint, stats,
-  acceptedThisSprint, undecided, undoLast, updateTicket, withHistory,
+  moveTicketToSprint, optimizePlan, recordDecision, removeSprint, revertTo, shiftSprint, slippedIn, stats,
+  acceptedThisSprint, undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
 
@@ -83,21 +83,21 @@ describe("version sprints", () => {
 
   it("the seeded sprint columns run newest-release first", () => {
     const s = freshStore();
-    expect(s.settings.sprints).toEqual(["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
+    expect(sprintNames(s.settings)).toEqual(["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
     expect(s.settings.currentSprint).toBe("v0.23");
   });
 
   it("the board order is the stored order, and it is reorderable", () => {
     const s = freshStore();
     const s1 = shiftSprint(s, "v0.23", -1);
-    expect(s1.settings.sprints).toEqual(["v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
-    expect(shiftSprint(s1, "v0.23", 1).settings.sprints).toEqual(s.settings.sprints);
+    expect(sprintNames(s1.settings)).toEqual(["v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
+    expect(sprintNames(shiftSprint(s1, "v0.23", 1).settings)).toEqual(sprintNames(s.settings));
   });
 
   it("a sprint cannot be shifted past either end", () => {
     const s = freshStore();
-    expect(shiftSprint(s, "v0.25", -1).settings.sprints).toEqual(s.settings.sprints);
-    expect(shiftSprint(s, "v0.21", 1).settings.sprints).toEqual(s.settings.sprints);
+    expect(sprintNames(shiftSprint(s, "v0.25", -1).settings)).toEqual(sprintNames(s.settings));
+    expect(sprintNames(shiftSprint(s, "v0.21", 1).settings)).toEqual(sprintNames(s.settings));
   });
 
   it("one column per sprint, and a backlog for the unscheduled", () => {
@@ -114,16 +114,17 @@ describe("version sprints", () => {
   it("a new sprint is slotted in by version, newest left", () => {
     const s = freshStore();
     const s1 = addSprint(s, "v0.26");
-    expect(s1.settings.sprints[0]).toBe("v0.26");
+    expect(sprintNames(s1.settings)[0]).toBe("v0.26");
     const s2 = addSprint(s1, "v0.20");
-    expect(s2.settings.sprints[s2.settings.sprints.length - 1]).toBe("v0.20");
-    expect(addSprint(s2, "v0.26").settings.sprints).toHaveLength(s2.settings.sprints.length);
+    const names = sprintNames(s2.settings);
+    expect(names[names.length - 1]).toBe("v0.20");
+    expect(sprintNames(addSprint(s2, "v0.26").settings)).toHaveLength(names.length);
   });
 
   it("removing a sprint unschedules its tickets instead of deleting them", () => {
     const s = moveTicketToSprint(freshStore(), 2, "v0.22", NOW);
     const s1 = removeSprint(s, "v0.22");
-    expect(s1.settings.sprints).not.toContain("v0.22");
+    expect(sprintNames(s1.settings)).not.toContain("v0.22");
     expect(s1.tickets.find((t) => t.id === 2)!.sprint).toBeNull();
     expect(s1.tickets).toHaveLength(s.tickets.length);
   });
@@ -351,5 +352,73 @@ describe("auto-optimize", () => {
     expect(moved.state).toBe("Committed");
     const s2 = revertTo(s1, s1.history.length - 1, NOW);
     expect(s2.tickets.find((t) => t.id === plan[0].id)!.sprint).toBeNull();
+  });
+});
+
+describe("release dates and feature freeze", () => {
+  it("every release carries a freeze date and a release date", () => {
+    for (const sp of freshStore().settings.sprints) {
+      expect(sp.freeze).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(sp.release).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  it("a release is frozen once its freeze date arrives", () => {
+    const sp = findSprint(freshStore().settings, "v0.23")!;
+    expect(isFrozen(sp, parseDate(sp.freeze!))).toBe(true);
+    expect(isFrozen(sp, new Date(parseDate(sp.freeze!).getTime() - 86_400_000))).toBe(false);
+  });
+
+  it("auto-optimize skips frozen releases", () => {
+    let s = freshStore();
+    s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
+    const plan = optimizePlan(s, NOW);
+    expect(plan.map((m) => m.to)).not.toContain("v0.23");
+    expect(plan.length).toBeGreaterThan(0);
+  });
+
+  it("auto-optimize prefers a release that ships on or before the due date", () => {
+    let s = freshStore();
+    s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
+    s = updateSprint(s, "v0.24", { freeze: "2020-01-01" });
+    const plan = optimizePlan(s, NOW);
+    expect(plan.length).toBeGreaterThan(0);
+    expect(plan.every((m) => m.to === "v0.25")).toBe(true);
+    // the dated ones cannot be shipped in time, and the proposal says so
+    expect(plan.some((m) => m.warning)).toBe(true);
+  });
+
+  it("proposes nothing when every eligible release is frozen", () => {
+    let s = freshStore();
+    for (const sp of s.settings.sprints) s = updateSprint(s, sp.name, { freeze: "2020-01-01" });
+    expect(optimizePlan(s, NOW)).toEqual([]);
+  });
+
+  it("records what was placed into a release after its freeze", () => {
+    let s = freshStore();
+    s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
+    s = withHistory(
+      s, "move 2 to v0.23", (cur) => moveTicketToSprint(cur, 2, "v0.23", NOW), NOW,
+      { kind: "move", ticketId: 2, sprint: "v0.23" },
+    );
+    const slips = slippedIn(s, "v0.23", NOW);
+    expect(slips).toHaveLength(1);
+    expect(slips[0].op?.ticketId).toBe(2);
+    expect(slips[0].label).toContain("move 2");
+  });
+
+  it("reports no slip for a release that has not frozen", () => {
+    const s = withHistory(
+      freshStore(), "move 2 to v0.24", (cur) => moveTicketToSprint(cur, 2, "v0.24", NOW), NOW,
+      { kind: "move", ticketId: 2, sprint: "v0.24" },
+    );
+    expect(slippedIn(s, "v0.24", NOW)).toHaveLength(0);
+  });
+
+  it("moving a ticket still works as a plain change, with or without an op", () => {
+    const s = freshStore();
+    const a = withHistory(s, "move 3 to v0.24", (cur) => moveTicketToSprint(cur, 3, "v0.24", NOW), NOW);
+    expect(a.history[0].op).toBeUndefined();
+    expect(slippedIn(a, "v0.24", NOW)).toHaveLength(0);
   });
 });

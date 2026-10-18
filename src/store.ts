@@ -2,10 +2,15 @@ import {
   type DecisionAction,
   type ProjectId,
   type Settings,
+  type Sprint,
   type Ticket,
   DEFAULT_SETTINGS,
+  defaultSprints,
   derive,
+  findSprint,
+  hasShipped,
   iso,
+  isFrozen,
   isOpen,
   label,
   queueHealth,
@@ -35,6 +40,10 @@ export interface Snapshot {
   at: string;
   label: string;
   data: string;   // JSON of { tickets, settings }
+  /** Structured form of the action, when it is one we can describe. Lets the
+   *  board answer questions like "what was added after the freeze?" without
+   *  storing anything on the ticket itself. */
+  op?: { kind: "move"; ticketId: number; sprint: string | null };
 }
 
 export interface Store {
@@ -64,7 +73,7 @@ export function freshStore(): Store {
     decisions: [],
     settings: {
       ...DEFAULT_SETTINGS,
-      sprints: [...DEFAULT_SETTINGS.sprints],
+      sprints: defaultSprints(),
       weights: { ...DEFAULT_SETTINGS.weights },
     },
     nextTicketId: tickets.reduce((m, t) => Math.max(m, t.id), 0) + 1,
@@ -94,6 +103,14 @@ function looksValid(s: unknown): s is Store {
   );
 }
 
+/** Releases were names before they had dates; upgrade in place. */
+function migrateSprints(sprints: unknown): Sprint[] {
+  if (!Array.isArray(sprints)) return defaultSprints();
+  return sprints.map((sp) =>
+    typeof sp === "string" ? { name: sp, freeze: null, release: null } : (sp as Sprint),
+  );
+}
+
 export function load(): Store {
   try {
     const raw = localStorage.getItem(KEY);
@@ -102,7 +119,12 @@ export function load(): Store {
     if (!looksValid(parsed)) return freshStore();
     // `history` arrived after the first release, so default it rather than
     // invalidating a save that predates it.
-    return { ...parsed, history: Array.isArray(parsed.history) ? parsed.history : [] };
+    return {
+      ...parsed,
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+      // releases used to be plain names; give them dates rather than reseeding
+      settings: { ...parsed.settings, sprints: migrateSprints(parsed.settings.sprints) },
+    };
   } catch {
     return freshStore();
   }
@@ -192,26 +214,33 @@ export function compareSprints(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true });
 }
 
-/**
- * Add a sprint column. The array IS the display order (newest left by default)
- * and the owner controls it, so a new sprint is slotted in by version relative
- * to what is already there instead of re-sorting the whole list and wiping out
- * any manual arrangement.
- */
+/** Add a release column, slotted in by version. Dates start empty. */
 export function addSprint(s: Store, name: string): Store {
   const clean = name.trim();
-  if (!clean || s.settings.sprints.includes(clean)) return s;
-  const at = s.settings.sprints.findIndex((x) => compareSprints(clean, x) > 0);
+  if (!clean || s.settings.sprints.some((x) => x.name === clean)) return s;
+  const at = s.settings.sprints.findIndex((x) => compareSprints(clean, x.name) > 0);
   const sprints = [...s.settings.sprints];
-  if (at < 0) sprints.push(clean);
-  else sprints.splice(at, 0, clean);
+  const fresh: Sprint = { name: clean, freeze: null, release: null };
+  if (at < 0) sprints.push(fresh);
+  else sprints.splice(at, 0, fresh);
   return { ...s, settings: { ...s.settings, sprints } };
 }
 
-/** Shift a sprint one place left (-1) or right (+1) in the display order. */
+/** Set a release's freeze and/or release date. */
+export function updateSprint(s: Store, name: string, patch: Partial<Omit<Sprint, "name">>): Store {
+  return {
+    ...s,
+    settings: {
+      ...s.settings,
+      sprints: s.settings.sprints.map((sp) => (sp.name === name ? { ...sp, ...patch } : sp)),
+    },
+  };
+}
+
+/** Shift a release one place left (-1) or right (+1) in the display order. */
 export function shiftSprint(s: Store, name: string, delta: -1 | 1): Store {
   const sprints = [...s.settings.sprints];
-  const i = sprints.indexOf(name);
+  const i = sprints.findIndex((x) => x.name === name);
   const j = i + delta;
   if (i < 0 || j < 0 || j >= sprints.length) return s;
   [sprints[i], sprints[j]] = [sprints[j], sprints[i]];
@@ -226,8 +255,8 @@ export const HISTORY_CAP = 25;
 const capture = (s: Store): string => JSON.stringify({ tickets: s.tickets, settings: s.settings });
 
 /** Record the CURRENT state under a label, immediately before a change lands. */
-export function pushHistory(s: Store, label: string, now = new Date()): Store {
-  const snapshot: Snapshot = { at: now.toISOString(), label, data: capture(s) };
+export function pushHistory(s: Store, label: string, now = new Date(), op?: Snapshot["op"]): Store {
+  const snapshot: Snapshot = { at: now.toISOString(), label, data: capture(s), ...(op ? { op } : {}) };
   const history = [...s.history, snapshot];
   while (history.length > HISTORY_CAP) history.shift();
   return { ...s, history };
@@ -240,10 +269,27 @@ export function withHistory(
   label: string,
   mutate: (s: Store) => Store,
   now = new Date(),
+  op?: Snapshot["op"],
 ): Store {
-  const recorded = pushHistory(s, label, now);
+  const recorded = pushHistory(s, label, now, op);
   const next = mutate(recorded);
   return next === recorded ? s : next;
+}
+
+/**
+ * Tickets that were placed into a release AFTER its freeze date. Derived from
+ * the recorded moves rather than from a field on the ticket — which keeps the
+ * ticket lean, and the history window is exactly the one that matters here.
+ */
+export function slippedIn(s: Store, sprint: string, now = new Date()): Snapshot[] {
+  const sp = findSprint(s.settings, sprint);
+  if (!sp || sp.freeze === null || !isFrozen(sp, now)) return [];
+  return s.history.filter(
+    (h) =>
+      h.op?.kind === "move" &&
+      h.op.sprint === sprint &&
+      h.at.slice(0, 10) > sp.freeze!,
+  );
 }
 
 /**
@@ -268,24 +314,30 @@ export interface Move {
   from: string | null;
   to: string;
   reason: string;
+  /** Set when the proposal is placing work somewhere it knows is imperfect. */
+  warning?: string;
 }
 
 /**
- * Propose sprint assignments for tickets that have none. Conservative by
- * design: it never moves work that is already scheduled and never unschedules
- * anything, so a manual arrangement survives. The result is a proposal — the
- * caller applies it, and history makes it one click to undo.
+ * Propose release assignments for tickets that have none.
+ *
+ * Conservative by design: it never moves work that is already scheduled and
+ * never unschedules anything, so a manual arrangement survives. It also skips
+ * frozen releases — adding scope to a frozen release is a human decision, not
+ * an automatic one. The result is a proposal; the caller applies it, and
+ * history makes it one click to undo.
  */
 export function optimizePlan(s: Store, now = new Date()): Move[] {
   const target = s.settings.commitTargetPerSprint;
-  // Only releases that have not shipped yet, earliest first.
+  // Releases still to come, by release date. No date yet means it cannot be
+  // reasoned about, so it is left out.
   const upcoming = s.settings.sprints
-    .filter((sp) => compareSprints(sp, s.settings.currentSprint) >= 0)
-    .sort(compareSprints);
+    .filter((sp) => sp.release !== null && !hasShipped(sp, now) && !isFrozen(sp, now))
+    .sort((a, b) => a.release!.localeCompare(b.release!));
   if (upcoming.length === 0) return [];
 
   const load = new Map(
-    upcoming.map((sp) => [sp, s.tickets.filter((t) => t.sprint === sp && isOpen(t)).length]),
+    upcoming.map((sp) => [sp.name, s.tickets.filter((t) => t.sprint === sp.name && isOpen(t)).length]),
   );
 
   const candidates = s.tickets
@@ -300,18 +352,27 @@ export function optimizePlan(s: Store, now = new Date()): Move[] {
 
   const moves: Move[] = [];
   for (const t of candidates) {
-    const sprint = upcoming.find((sp) => load.get(sp)! < target);
-    if (!sprint) break;                                     // every upcoming release is full
-    const next = load.get(sprint)! + 1;
-    load.set(sprint, next);
-    // Say all of what is true about why this one is early — a human reads this.
+    const room = upcoming.filter((sp) => load.get(sp.name)! < target);
+    if (room.length === 0) break;                           // every eligible release is full
+    // The release has to ship on or before the due date to be any use.
+    const inTime = t.dueDate ? room.find((sp) => sp.release! <= t.dueDate!) : room[0];
+    const sprint = inTime ?? room[0];
+    const next = load.get(sprint.name)! + 1;
+    load.set(sprint.name, next);
+
     const bits: string[] = [];
     if (t.type === "Critical") bits.push("critical");
     if (t.dueDate) bits.push(`due ${t.dueDate}`);
     if (bits.length === 0) bits.push(`score ${t.score}`);
+
     moves.push({
-      id: t.id, label: label(t.id), name: t.name, from: null, to: sprint,
-      reason: `${bits.join(", ")} — fills ${sprint} (${next}/${target})`,
+      id: t.id,
+      label: label(t.id),
+      name: t.name,
+      from: null,
+      to: sprint.name,
+      reason: `${bits.join(", ")} → ships ${sprint.release} (${next}/${target})`,
+      warning: t.dueDate && !inTime ? "no release ships before its due date" : undefined,
     });
   }
   return moves;
@@ -325,11 +386,11 @@ export function applyPlan(s: Store, moves: Move[], now = new Date()): Store {
   );
 }
 
-/** Remove a sprint column; tickets in it become unscheduled, not deleted. */
+/** Remove a release column; tickets in it become unscheduled, not deleted. */
 export function removeSprint(s: Store, name: string): Store {
   return {
     ...s,
-    settings: { ...s.settings, sprints: s.settings.sprints.filter((x) => x !== name) },
+    settings: { ...s.settings, sprints: s.settings.sprints.filter((x) => x.name !== name) },
     tickets: s.tickets.map((t) => (t.sprint === name ? { ...t, sprint: null } : t)),
   };
 }

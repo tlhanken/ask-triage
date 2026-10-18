@@ -11,8 +11,10 @@ afterEach(() => {
 });
 
 const cols = () => Array.from(document.querySelectorAll(".col"));
-const colByTitle = (title: string) =>
-  cols().find((c) => c.querySelector(".col-head b")?.textContent === title);
+/** Release columns title themselves with a button; the backlog uses a <b>. */
+const colTitle = (c: Element) =>
+  (c.querySelector(".col-name") ?? c.querySelector(".col-head b"))?.textContent;
+const colByTitle = (title: string) => cols().find((c) => colTitle(c) === title);
 
 describe("triage loop", () => {
   it("renders the top ticket with its decision context pre-loaded", () => {
@@ -69,19 +71,16 @@ describe("sprint board", () => {
   it("shows the backlog, then sprints newest-release first", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    const titles = cols().map((c) => c.querySelector(".col-head b")?.textContent);
-    expect(titles).toEqual(["Backlog", "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
+    expect(cols().map(colTitle)).toEqual(["Backlog", "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
   });
 
   it("sprint columns can be reordered with the arrows", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
     fireEvent.click(screen.getByRole("button", { name: "move v0.23 left" }));
-    const titles = cols().map((c) => c.querySelector(".col-head b")?.textContent);
-    expect(titles).toEqual(["Backlog", "v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
+    expect(cols().map(colTitle)).toEqual(["Backlog", "v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
     fireEvent.click(screen.getByRole("button", { name: "move v0.23 right" }));
-    expect(cols().map((c) => c.querySelector(".col-head b")?.textContent))
-      .toEqual(["Backlog", "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
+    expect(cols().map(colTitle)).toEqual(["Backlog", "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
   });
 
   it("moving a ticket with the column selector moves it between sprints", () => {
@@ -97,8 +96,8 @@ describe("sprint board", () => {
   it("adding a sprint adds its column", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    fireEvent.change(screen.getByPlaceholderText(/add sprint/i), { target: { value: "v0.26" } });
-    fireEvent.submit(screen.getByPlaceholderText(/add sprint/i).closest("form")!);
+    fireEvent.change(screen.getByPlaceholderText(/add release/i), { target: { value: "v0.26" } });
+    fireEvent.submit(screen.getByPlaceholderText(/add release/i).closest("form")!);
     expect(colByTitle("v0.26")).toBeTruthy();
   });
 });
@@ -214,6 +213,55 @@ describe("board interaction", () => {
     fireEvent.click(screen.getByRole("button", { name: /auto-optimize/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Discard$/ }));
     expect(colByTitle("v0.23")!.querySelectorAll(".tcard")).toHaveLength(0);
+  });
+});
+
+describe("release dates and freeze", () => {
+  it("shows each release's freeze and ship dates on the board", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    const col = colByTitle("v0.23")!.textContent ?? "";
+    expect(col).toMatch(/freeze \d{4}-\d{2}-\d{2}/);
+    expect(col).toMatch(/ships \d{4}-\d{2}-\d{2}/);
+  });
+
+  it("edits a release's dates from the column", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "v0.24" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Release date"), { target: { value: "2027-03-01" } });
+    fireEvent.click(screen.getByRole("button", { name: /save dates/i }));
+    expect(colByTitle("v0.24")!.textContent).toContain("2027-03-01");
+  });
+
+  it("warns about scope after freeze but still allows it", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+
+    // freeze v0.24 by hand, then drag something into it
+    fireEvent.click(screen.getByRole("button", { name: "v0.24" }));
+    fireEvent.change(screen.getByLabelText("Feature freeze"), { target: { value: "2020-01-01" } });
+    fireEvent.click(screen.getByRole("button", { name: /save dates/i }));
+    expect(colByTitle("v0.24")!.textContent).toContain("frozen");
+
+    const card = colByTitle("Backlog")!.querySelector(".tcard")!;
+    const name = card.querySelector(".tname")!.textContent!;
+    fireEvent.dragStart(card);
+    fireEvent.drop(colByTitle("v0.24")!.querySelector(".col-body")!);
+
+    expect(screen.getByRole("status").textContent).toMatch(/scope after freeze/i);
+    expect(colByTitle("v0.24")!.textContent).toContain(name);            // it went in
+    expect(colByTitle("v0.24")!.textContent).toMatch(/1 after freeze/);  // and is reported
+  });
+
+  it("refuses a freeze date that lands after the release date", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    fireEvent.click(screen.getByRole("button", { name: "v0.24" }));
+    fireEvent.change(screen.getByLabelText("Feature freeze"), { target: { value: "2030-01-01" } });
+    expect(screen.getByText(/freeze is after the release date/i)).toBeTruthy();
   });
 });
 

@@ -1,9 +1,12 @@
-import { useState, type DragEvent } from "react";
-import { type Ticket, backlog, derive, inSprint, isOpen } from "./schema";
-import { type Move, type Store, optimizePlan } from "./store";
+import { useState, type DragEvent, type ReactNode } from "react";
+import {
+  type Ticket, backlog, daysSince, daysToRelease, derive, findSprint, hasShipped, inSprint,
+  isFrozen, isOpen,
+} from "./schema";
+import { type Move, type Store, optimizePlan, slippedIn } from "./store";
 
-/** Sprint board: backlog on the left, then sprints newest-release first.
- *  Cards can be dragged between columns; the stored order is the display order. */
+/** Release board: backlog on the left, then releases newest-first.
+ *  Cards drag between columns; the stored order is the display order. */
 
 interface Props {
   store: Store;
@@ -13,27 +16,41 @@ interface Props {
   onRemoveSprint: (name: string) => void;
   onShiftSprint: (name: string, delta: -1 | 1) => void;
   onApplyPlan: (moves: Move[]) => void;
+  onEditSprint: (name: string) => void;
 }
 
 export default function Sprints({
-  store, onEdit, onMove, onAddSprint, onRemoveSprint, onShiftSprint, onApplyPlan,
+  store, onEdit, onMove, onAddSprint, onRemoveSprint, onShiftSprint, onApplyPlan, onEditSprint,
 }: Props) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [plan, setPlan] = useState<Move[] | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const open = store.tickets.filter(isOpen);
   const backlogTickets = backlog(store.tickets);
   const target = store.settings.commitTargetPerSprint;
-  const sprints = store.settings.sprints;
+  const releases = store.settings.sprints;
 
-  /** The dragged id comes from component state first, so a drop works even
-   *  where dataTransfer is unavailable. */
+  /** Adding to a frozen release is allowed, and reported rather than blocked. */
+  const move = (id: number, sprint: string | null) => {
+    const sp = findSprint(store.settings, sprint);
+    if (sp && isFrozen(sp)) {
+      const after = sp.freeze ? (daysSince(sp.freeze) ?? 0) : 0;
+      setNotice(
+        `${sp.name} froze on ${sp.freeze}` +
+        (after > 0 ? `, ${after} day${after === 1 ? "" : "s"} ago` : ", today") +
+        ". This is scope after freeze.",
+      );
+    }
+    onMove(id, sprint);
+  };
+
   const drop = (sprint: string | null) => (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const raw = e.dataTransfer?.getData("text/plain") ?? "";
     const id = dragging ?? (raw ? Number(raw) : NaN);
-    if (Number.isFinite(id) && id > 0) onMove(id, sprint);
+    if (Number.isFinite(id) && id > 0) move(id, sprint);
     setDragging(null);
     setOver(null);
   };
@@ -45,8 +62,8 @@ export default function Sprints({
     <div>
       <div className="toolbar">
         <span className="dim small">
-          {sprints.length} sprints · {open.length} open · {backlogTickets.length} unscheduled ·
-          {" "}drag a card between columns · newest left, ◀ ▶ to reorder
+          {releases.length} releases · {open.length} open · {backlogTickets.length} unscheduled ·
+          {" "}drag a card between columns · click a release name for its dates
         </span>
         <div className="spacer" />
         <button onClick={() => setPlan(optimizePlan(store))} title="Propose releases for unscheduled work">
@@ -60,9 +77,17 @@ export default function Sprints({
             if (input?.value) { onAddSprint(input.value); input.value = ""; }
           }}
         >
-          <input name="newsprint" placeholder="add sprint (e.g. v0.26)" style={{ width: 170 }} />
+          <input name="newsprint" placeholder="add release (e.g. v0.26)" style={{ width: 170 }} />
         </form>
       </div>
+
+      {notice && (
+        <div className="notice" role="status">
+          <span><b>Scope after freeze.</b> {notice}</span>
+          <div className="spacer" />
+          <button onClick={() => setNotice(null)}>dismiss</button>
+        </div>
+      )}
 
       {plan && (
         <div className="plan">
@@ -70,7 +95,7 @@ export default function Sprints({
             <b>Proposed releases</b>
             <span className="dim small">
               {plan.length} move{plan.length === 1 ? "" : "s"} · nothing moves until you apply ·
-              does not touch work that is already scheduled
+              skips frozen releases and work already scheduled
             </span>
             <div className="spacer" />
             {plan.length > 0 && (
@@ -80,7 +105,8 @@ export default function Sprints({
           </div>
           {plan.length === 0 ? (
             <div className="dim small" style={{ padding: "8px 0" }}>
-              Nothing to place — every open ticket already has a release, or the upcoming ones are full.
+              Nothing to place — everything open is already scheduled, or the eligible releases are
+              full, frozen, or have no release date set.
             </div>
           ) : (
             <ul className="plan-list">
@@ -88,6 +114,7 @@ export default function Sprints({
                 <li key={m.id}>
                   <b>{m.label}</b> {m.name} → <b>{m.to}</b>{" "}
                   <span className="dim small">{m.reason}</span>
+                  {m.warning && <span className="chip mini flag" style={{ marginLeft: 6 }}>{m.warning}</span>}
                 </li>
               ))}
             </ul>
@@ -99,10 +126,11 @@ export default function Sprints({
         <Column
           title="Backlog"
           subtitle={`${backlogTickets.length} unscheduled`}
+          dates={null}
           tickets={[...backlogTickets].sort(byScore)}
           store={store}
           onEdit={onEdit}
-          onMove={onMove}
+          onMove={move}
           onRemove={null}
           onShift={null}
           isOver={over === "Backlog"}
@@ -113,27 +141,51 @@ export default function Sprints({
           onCardDragStart={setDragging}
           onCardDragEnd={() => { setDragging(null); setOver(null); }}
         />
-        {sprints.map((sp, i) => {
-          const ts = inSprint(store.tickets, sp).filter(isOpen);
+        {releases.map((sp, i) => {
+          const ts = inSprint(store.tickets, sp.name).filter(isOpen);
           const overCapacity = ts.length > target;
+          const frozen = isFrozen(sp);
+          const shipped = hasShipped(sp);
+          const toRelease = daysToRelease(sp);
+          const slips = slippedIn(store, sp.name);
           return (
             <Column
-              key={sp}
-              title={sp}
+              key={sp.name}
+              title={sp.name}
               subtitle={`${ts.length}${overCapacity ? ` — over ${target}` : `/${target}`}`}
+              dates={
+                <>
+                  {sp.freeze ? `freeze ${sp.freeze}` : "no freeze"}
+                  {" · "}
+                  {sp.release ? `ships ${sp.release}` : "no release date"}
+                  {toRelease !== null && !shipped && (
+                    <span className={"chip mini " + (toRelease <= 7 ? "flag" : "")} style={{ marginLeft: 6 }}>
+                      {toRelease < 0 ? `${-toRelease}d late` : `${toRelease}d`}
+                    </span>
+                  )}
+                  {frozen && <span className="chip mini flag" style={{ marginLeft: 6 }}>frozen</span>}
+                  {shipped && <span className="chip mini" style={{ marginLeft: 6 }}>shipped</span>}
+                  {slips.length > 0 && (
+                    <span className="chip mini flag" style={{ marginLeft: 6 }}>
+                      {slips.length} after freeze
+                    </span>
+                  )}
+                </>
+              }
               over={overCapacity}
               tickets={[...ts].sort(byScore)}
               store={store}
               onEdit={onEdit}
-              onMove={onMove}
-              onRemove={() => onRemoveSprint(sp)}
-              onShift={(delta) => onShiftSprint(sp, delta)}
+              onMove={move}
+              onEditSprint={() => onEditSprint(sp.name)}
+              onRemove={() => onRemoveSprint(sp.name)}
+              onShift={(delta) => onShiftSprint(sp.name, delta)}
               canLeft={i > 0}
-              canRight={i < sprints.length - 1}
-              isOver={over === sp}
-              onDragOverColumn={() => setOver(sp)}
-              onDragLeaveColumn={() => setOver((c) => (c === sp ? null : c))}
-              onDropColumn={drop(sp)}
+              canRight={i < releases.length - 1}
+              isOver={over === sp.name}
+              onDragOverColumn={() => setOver(sp.name)}
+              onDragLeaveColumn={() => setOver((c) => (c === sp.name ? null : c))}
+              onDropColumn={drop(sp.name)}
               draggingId={dragging}
               onCardDragStart={setDragging}
               onCardDragEnd={() => { setDragging(null); setOver(null); }}
@@ -146,17 +198,20 @@ export default function Sprints({
 }
 
 function Column({
-  title, subtitle, tickets, store, onEdit, onMove, over, onRemove, onShift, canLeft, canRight,
-  isOver, onDragOverColumn, onDragLeaveColumn, onDropColumn, draggingId, onCardDragStart, onCardDragEnd,
+  title, subtitle, dates, tickets, store, onEdit, onMove, over, onRemove, onEditSprint, onShift,
+  canLeft, canRight, isOver, onDragOverColumn, onDragLeaveColumn, onDropColumn, draggingId,
+  onCardDragStart, onCardDragEnd,
 }: {
   title: string;
   subtitle: string;
+  dates: ReactNode;
   tickets: Ticket[];
   store: Store;
   onEdit: (t: Ticket) => void;
   onMove: (id: number, sprint: string | null) => void;
   over?: boolean;
   onRemove: (() => void) | null;
+  onEditSprint?: () => void;
   onShift: ((delta: -1 | 1) => void) | null;
   canLeft?: boolean;
   canRight?: boolean;
@@ -171,7 +226,9 @@ function Column({
   return (
     <div className="col">
       <div className="col-head">
-        <b>{title}</b>
+        {onEditSprint
+          ? <button className="col-name" onClick={onEditSprint} title="edit freeze and release dates">{title}</button>
+          : <b>{title}</b>}
         <span className={"small " + (over ? "tag Decline" : "dim")}>{subtitle}</span>
         {onShift && (
           <div className="col-ctl">
@@ -182,9 +239,10 @@ function Column({
           </div>
         )}
         {onRemove && (
-          <button className="x rm" title="remove sprint" aria-label={`remove ${title}`} onClick={onRemove}>✕</button>
+          <button className="x rm" title="remove release" aria-label={`remove ${title}`} onClick={onRemove}>✕</button>
         )}
       </div>
+      {dates && <div className="col-dates small dim">{dates}</div>}
       <div
         className={"col-body" + (isOver ? " over" : "")}
         onDragOver={(e) => { e.preventDefault(); onDragOverColumn(); }}
@@ -221,7 +279,7 @@ function Column({
               <select value={t.sprint ?? ""} onChange={(e) => onMove(t.id, e.target.value || null)}
                       aria-label={`release for ${d.name}`}>
                 <option value="">backlog</option>
-                {store.settings.sprints.map((s) => <option key={s} value={s}>{s}</option>)}
+                {store.settings.sprints.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
               </select>
             </div>
           );

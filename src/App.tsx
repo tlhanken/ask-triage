@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import type { DecisionAction, Ticket } from "./schema";
+import { type DecisionAction, type Ticket, sprintNames } from "./schema";
 import {
-  type Move, type Store, addSprint, applyPlan, blankTicket, createTicket, deleteTicket, freshStore,
-  load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save, clear, shiftSprint, stats,
-  undoLast, updateTicket, withHistory,
+  type Move, type Snapshot, type Store, addSprint, applyPlan, blankTicket, createTicket, deleteTicket,
+  freshStore, load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save, clear, shiftSprint,
+  stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
   downloadJson, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
@@ -15,6 +15,7 @@ import Register from "./Register";
 import DecisionLog from "./Decisions";
 import History from "./History";
 import TicketForm from "./TicketForm";
+import SprintForm from "./SprintForm";
 
 type Tab = "triage" | "sprints" | "projects" | "register" | "decisions" | "history";
 
@@ -23,18 +24,18 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("triage");
   const [editing, setEditing] = useState<{ ticket: Ticket } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingSprint, setEditingSprint] = useState<string | null>(null);
   const [fileMode, setFileMode] = useState(false);
   const [status, setStatus] = useState("saved in this browser");
 
-  /** Every mutation goes through here, so every change is labelled and revertible. */
-  const act = (label: string, mutate: (s: Store) => Store) =>
-    setStore((cur) => withHistory(cur, label, mutate));
+  /** Every mutation goes through here, so every change is labelled and revertible.
+   *  `op` describes the action in a form the board can query later. */
+  const act = (label: string, mutate: (s: Store) => Store, op?: Snapshot["op"]) =>
+    setStore((cur) => withHistory(cur, label, mutate, new Date(), op));
 
   useEffect(() => { save(store); }, [store]);
   const s = useMemo(() => stats(store), [store]);
 
-  // Is there a file endpoint (dev / preview server)? And if this browser has no
-  // state of its own yet, adopt whatever the file holds.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -60,7 +61,6 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Autosave to the file, debounced, so a burst of drags is one write.
   useEffect(() => {
     if (!fileMode) return;
     const t = window.setTimeout(() => {
@@ -92,6 +92,8 @@ export default function App() {
     }
   };
 
+  const names = sprintNames(store.settings);
+
   return (
     <>
       <header className="top">
@@ -118,11 +120,16 @@ export default function App() {
           <Sprints
             store={store}
             onEdit={(t) => setEditing({ ticket: t })}
-            onMove={(id, sp) => act(`move ${id} to ${sp ?? "backlog"}`, (cur) => moveTicketToSprint(cur, id, sp))}
-            onAddSprint={(n) => act(`add sprint ${n}`, (cur) => addSprint(cur, n))}
-            onRemoveSprint={(n) => act(`remove sprint ${n}`, (cur) => removeSprint(cur, n))}
+            onMove={(id, sp) =>
+              act(`move ${id} to ${sp ?? "backlog"}`, (cur) => moveTicketToSprint(cur, id, sp), {
+                kind: "move", ticketId: id, sprint: sp,
+              })}
+            onAddSprint={(n) => act(`add release ${n}`, (cur) => addSprint(cur, n))}
+            onRemoveSprint={(n) => act(`remove release ${n}`, (cur) => removeSprint(cur, n))}
             onShiftSprint={(n, d) => act(`reorder ${n}`, (cur) => shiftSprint(cur, n, d))}
-            onApplyPlan={(moves: Move[]) => act(`auto-optimize (${moves.length} moves)`, (cur) => applyPlan(cur, moves))}
+            onApplyPlan={(moves: Move[]) =>
+              act(`auto-optimize (${moves.length} moves)`, (cur) => applyPlan(cur, moves))}
+            onEditSprint={setEditingSprint}
           />
         )}
         {tab === "projects" && <Projects store={store} onEdit={(t) => setEditing({ ticket: t })} />}
@@ -144,7 +151,7 @@ export default function App() {
       {creating && (
         <TicketForm
           initial={blankTicket()}
-          sprints={store.settings.sprints}
+          sprints={names}
           onCancel={() => setCreating(false)}
           onSave={(draft) => { act("new ticket", (cur) => createTicket(cur, draft)); setCreating(false); }}
         />
@@ -155,7 +162,7 @@ export default function App() {
           key={editing.ticket.id}
           initial={editing.ticket}
           editingId={editing.ticket.id}
-          sprints={store.settings.sprints}
+          sprints={names}
           onCancel={() => setEditing(null)}
           onSave={(draft, id) => {
             if (id) act(`edit ${id}`, (cur) => updateTicket(cur, id, draft));
@@ -169,6 +176,28 @@ export default function App() {
           }}
         />
       )}
+
+      {editingSprint && (() => {
+        const sp = store.settings.sprints.find((x) => x.name === editingSprint);
+        if (!sp) return null;
+        return (
+          <SprintForm
+            key={sp.name}
+            sprint={sp}
+            onCancel={() => setEditingSprint(null)}
+            onSave={(patch) => {
+              act(`dates for ${sp.name}`, (cur) => updateSprint(cur, sp.name, patch));
+              setEditingSprint(null);
+            }}
+            onDelete={() => {
+              if (window.confirm(`Delete ${sp.name}? Its tickets go back to the backlog — nothing is deleted.`)) {
+                act(`remove release ${sp.name}`, (cur) => removeSprint(cur, sp.name));
+                setEditingSprint(null);
+              }
+            }}
+          />
+        );
+      })()}
     </>
   );
 }

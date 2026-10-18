@@ -125,6 +125,22 @@ tr.clickable { cursor: pointer; }
 .col-head .x:hover { color: var(--ink); }
 .col-head .x:disabled { opacity: .25; cursor: default; }
 .col-ctl { display: flex; gap: 2px; margin-left: auto; }
+.col-name {
+  background: transparent; border: none; color: var(--ink);
+  font: inherit; font-weight: 600; padding: 0; text-align: left;
+}
+.col-name:hover { color: var(--accent); }
+.col-dates { padding: 0 10px 8px; line-height: 1.5; }
+.notice {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #4a3a12; border: 1px solid #7a6220; color: #ffe9b8;
+  border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
+}
+.notice b { color: #fff3d6; }
+.notice button {
+  background: transparent; color: #ffe9b8; border: 1px solid #7a6220;
+  padding: 5px 10px; border-radius: 8px;
+}
 .col-body { padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .tcard {
   background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;

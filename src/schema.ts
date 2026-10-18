@@ -68,13 +68,20 @@ export interface Ticket {
   nextAction: string;            // what happens next, and who
 }
 
+/** A release on the board: when it stops taking new scope, and when it ships. */
+export interface Sprint {
+  name: string;                // "v0.23"
+  freeze: string | null;       // ISO date — feature freeze
+  release: string | null;      // ISO date — release date
+}
+
 export interface Settings {
   sprintLengthDays: number;
   commitTargetPerSprint: number;
   throughputPerWeek: number;
   intakePerWeek: number;
   currentSprint: string;
-  sprints: string[];             // the sprint columns, in order
+  sprints: Sprint[],             // the release columns, in display order
   weights: {
     critical: number;
     should: number;
@@ -96,7 +103,7 @@ export const DEFAULT_SETTINGS: Settings = {
   throughputPerWeek: 5,
   intakePerWeek: 7.5,
   currentSprint: "v0.23",
-  sprints: ["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"], // newest left; reorderable
+  sprints: [],                   // freshStore() fills dated defaults; see defaultSprints()
   weights: {
     critical: 100,
     should: 30,
@@ -138,6 +145,39 @@ export function daysSince(isoDate: string | null | undefined, now = new Date()):
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return Math.round((today.getTime() - then.getTime()) / MS_DAY);
 }
+
+/** The default release plan. v0.23 is current: it freezes soon and ships in two weeks. */
+export const DEFAULT_SPRINT_NAMES = ["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]; // newest left
+
+export function defaultSprints(now = new Date()): Sprint[] {
+  const plan: Array<[string, number, number]> = [
+    ["v0.25", 42, 56], ["v0.24", 28, 42], ["v0.23", 5, 14], ["v0.22", -9, 0], ["v0.21", -23, -14],
+  ];
+  return plan.map(([name, freezeIn, releaseIn]) => ({
+    name, freeze: isoFrom(now, freezeIn), release: isoFrom(now, releaseIn),
+  }));
+}
+
+const isoFrom = (now: Date, inDays: number): string => {
+  const d = new Date(now.getTime() + inDays * MS_DAY);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
+
+export const findSprint = (s: Settings, name: string | null): Sprint | undefined =>
+  name ? s.sprints.find((x) => x.name === name) : undefined;
+
+/** Frozen: the freeze date has arrived, so new scope is a deliberate decision. */
+export const isFrozen = (sp: Sprint | undefined, now = new Date()): boolean =>
+  !!sp && sp.freeze !== null && daysSince(sp.freeze, now)! >= 0;
+
+/** Shipped: the release date has arrived. */
+export const hasShipped = (sp: Sprint | undefined, now = new Date()): boolean =>
+  !!sp && sp.release !== null && daysSince(sp.release, now)! >= 0;
+
+export const daysToRelease = (sp: Sprint | undefined, now = new Date()): number | null =>
+  sp && sp.release ? -daysSince(sp.release, now)! : null;
 
 export const isOpen = (t: Ticket): boolean => !CLOSED.includes(t.state);
 
