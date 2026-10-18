@@ -198,6 +198,21 @@ tr.clickable { cursor: pointer; }
 }
 .flabel { color: var(--dim); font-size: 12px; margin-bottom: 6px; }
 .stamped { border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 6px; }
+.tier {
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; margin-top: 12px; background: var(--panel2);
+}
+.tier > summary { cursor: pointer; font-weight: 600; }
+.tier > summary .dim { font-weight: 400; margin-left: 6px; }
+.tier .form { margin: 12px 0 2px; }
+dl.meta { display: grid; grid-template-columns: 150px 1fr; gap: 6px 16px; margin: 12px 0 2px; }
+dl.meta dt { color: var(--dim); }
+dl.meta dd { margin: 0; }
+button.mini {
+  background: transparent; color: var(--dim); border: 1px solid var(--line);
+  padding: 2px 8px; border-radius: 6px; font-size: 11px; margin-left: 8px;
+}
+button.mini:hover { color: var(--ink); }
 .sheet-foot { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--line); padding-top: 14px; }
 .sheet-foot button {
   background: var(--panel2); color: var(--ink); border: 1px solid var(--line);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { type DecisionAction, type Ticket, derive, externalLabel, label } from "./schema";
+import { type DecisionAction, type Ticket, derive, estimateLabel, externalLabel, label } from "./schema";
 import { type Store, defaultRevisitDays, undecided, acceptedThisSprint } from "./store";
 
 /** The decision loop. One ticket at a time, context pre-loaded, one keystroke
@@ -151,14 +151,15 @@ function Card({ ticket, settings }: { ticket: Ticket; settings: Store["settings"
       <div className="badges">
         {d.projects.map((p) => <span className="badge" key={p}>{p}</span>)}
         <span className={"badge " + (d.type === "Critical" ? "critical" : "")}>{d.type}</span>
-        <span className="badge">{d.size}</span>
-        <span className="badge">{d.ownerType}: {d.owner || "—"}</span>
+        <span className="badge">{estimateLabel(d.estimate)}</span>
         {d.state !== "New" && <span className="badge">{d.state}</span>}
         {d.flags.map((f) => <span className="badge flag" key={f}>{f}</span>)}
+        {d.overEstimate && <span className="badge flag">won't fit before due</span>}
       </div>
       <dl className="grid">
         <dt>Summary</dt><dd>{d.summary || "—"}</dd>
         <dt>Who's waiting</dt><dd>{d.stakeholders.join(", ") || "—"}</dd>
+        <dt>Estimated</dt><dd>{estimateLabel(d.estimate)}</dd>
         <dt>Waited</dt><dd>{d.waitedLabel}</dd>
         <dt>Due</dt>
         <dd>
@@ -173,8 +174,8 @@ function Card({ ticket, settings }: { ticket: Ticket; settings: Store["settings"
         <dt>Draft score</dt><dd className="mono">{d.score}</dd>
         <dt>External ticket</dt>
         <dd>{d.externalUrl ? <a href={d.externalUrl} target="_blank" rel="noreferrer">{externalLabel(d.externalUrl)}</a> : "—"}</dd>
-        <dt>Next action</dt><dd>{d.nextAction || "—"}</dd>
       </dl>
+      {d.notes && <p className="dim small" style={{ marginTop: 12 }}>{d.notes}</p>}
     </div>
   );
 }

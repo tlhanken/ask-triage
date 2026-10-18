@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { type DecisionAction, type Ticket, sprintNames } from "./schema";
+import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addSprint, applyPlan, blankTicket, createTicket, deleteTicket,
   freshStore, load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save, clear, shiftSprint,
@@ -92,8 +92,6 @@ export default function App() {
     }
   };
 
-  const names = sprintNames(store.settings);
-
   return (
     <>
       <header className="top">
@@ -151,7 +149,6 @@ export default function App() {
       {creating && (
         <TicketForm
           initial={blankTicket()}
-          sprints={names}
           onCancel={() => setCreating(false)}
           onSave={(draft) => { act("new ticket", (cur) => createTicket(cur, draft)); setCreating(false); }}
         />
@@ -162,7 +159,6 @@ export default function App() {
           key={editing.ticket.id}
           initial={editing.ticket}
           editingId={editing.ticket.id}
-          sprints={names}
           onCancel={() => setEditing(null)}
           onSave={(draft, id) => {
             if (id) act(`edit ${id}`, (cur) => updateTicket(cur, id, draft));

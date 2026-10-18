@@ -14,14 +14,15 @@
 export const PROJECTS = ["Atlas", "Borealis", "Cinder", "Delta", "Platform"] as const;
 export type ProjectId = (typeof PROJECTS)[number];
 
-export const OWNER_TYPES = ["Partner", "Team", "Me"] as const;
-export type OwnerType = (typeof OWNER_TYPES)[number];
-
 export const TICKET_TYPES = ["Critical", "Should", "Nice-to-have"] as const;
 export type TicketType = (typeof TICKET_TYPES)[number];
 
-export const SIZES = ["S", "M", "L"] as const;
-export type Size = (typeof SIZES)[number];
+/** How long it is expected to take, in sprints. 3 reads as "three or more". */
+export const ESTIMATES = [1, 2, 3] as const;
+export type Estimate = (typeof ESTIMATES)[number];
+
+export const estimateLabel = (n: Estimate): string =>
+  n >= 3 ? "3+ sprints" : `${n} sprint${n === 1 ? "" : "s"}`;
 
 export const STATES = [
   "New",
@@ -44,28 +45,38 @@ export type DecisionAction = (typeof DECISIONS)[number];
 export const CLOSED: State[] = ["Done", "Won't Do"];
 export const OPEN_STATES: State[] = STATES.filter((s) => !CLOSED.includes(s)) as State[];
 
-/** 18 fields. Each one drives a decision, a flag, a score term or a view. */
+/**
+ * Three tiers. Only CORE is asked for; OPTIONAL is one click away; BACKGROUND
+ * is set by the app or the loop and is shown but never hand-entered. Anything
+ * not in these lists does not belong on a ticket.
+ */
+export const CORE_FIELDS = ["name", "summary", "projects", "externalUrl", "dueDate", "estimate"] as const;
+export const OPTIONAL_FIELDS = ["type", "stakeholders", "notes"] as const;
+export const BACKGROUND_FIELDS = ["state", "opened", "sprint", "carryovers", "lastTouched", "closed"] as const;
+
 export interface Ticket {
   id: number;
+
+  // ---- core: what a person decides
   name: string;                  // short title
   summary: string;               // what it is / why it exists
   projects: ProjectId[];         // relevant projects, from the typesafe list
   externalUrl: string | null;    // external ticket link (its label is derived)
   dueDate: string | null;        // ISO date; null = no hard date
+  estimate: Estimate;            // how many sprints of work this is
 
-  ownerType: OwnerType;
-  owner: string;
-  stakeholders: string[];
-  type: TicketType;
-  size: Size;
+  // ---- optional: available, never required
+  type: TicketType;              // Critical / Should / Nice-to-have
+  stakeholders: string[];        // who is told about it
+  notes: string;                 // freeform context that has nowhere else to live
+
+  // ---- background metadata: set by the app or the triage loop
   state: State;
-
   opened: string | null;         // stamped on create
-  sprint: string | null;         // e.g. "v0.23"; stamped by triage/move
-  carryovers: number;            // bumped once per sprint close
+  sprint: string | null;         // e.g. "v0.23"; set by the board or triage
+  carryovers: number;            // bumped when a release ships without it
   lastTouched: string | null;    // stamped on every edit
   closed: string | null;         // stamped on Done / Won't Do
-  nextAction: string;            // what happens next, and who
 }
 
 /** A release on the board: when it stops taking new scope, and when it ships. */
@@ -125,6 +136,8 @@ export interface DerivedTicket extends Ticket {
   ageDays: number | null;
   daysToDue: number | null;
   waitedLabel: string;
+  /** True when the estimate cannot finish before the due date allows. */
+  overEstimate: boolean;
 }
 
 const MS_DAY = 86_400_000;
@@ -219,7 +232,7 @@ export function scoreTicket(t: Ticket, s: Settings, now = new Date()): number {
   const age = daysSince(t.opened, now);
   if (age !== null) n += (Math.min(age, 365) / 30) * w.agePer30Days;
   n += t.carryovers * w.perCarryover;
-  n += t.size === "S" ? w.smallBonus : t.size === "M" ? w.smallBonus * 0.5 : 0;
+  n += t.estimate <= 1 ? w.smallBonus : t.estimate === 2 ? w.smallBonus * 0.5 : 0;
   return Math.round(n);
 }
 
@@ -230,13 +243,17 @@ function waitedLabel(t: Ticket, now: Date): string {
 }
 
 export function derive(t: Ticket, s: Settings, now = new Date()): DerivedTicket {
+  const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
   return {
     ...t,
     score: scoreTicket(t, s, now),
     flags: computeFlags(t, s, now),
     ageDays: daysSince(t.opened, now),
-    daysToDue: t.dueDate ? -daysSince(t.dueDate, now)! : null,
+    daysToDue: toDue,
     waitedLabel: waitedLabel(t, now),
+    // a release cadence of sprintLengthDays is the only way to turn an estimate
+    // in sprints into days, so keep the comparison in days
+    overEstimate: toDue !== null && toDue < t.estimate * s.sprintLengthDays,
   };
 }
 

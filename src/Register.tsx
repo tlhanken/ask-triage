@@ -16,7 +16,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
       .filter((t) => (stateFilter ? t.state === stateFilter : true))
       .filter((t) =>
         !needle ||
-        [t.name, t.summary, t.projects.join(" "), t.owner, t.stakeholders.join(" "), externalLabel(t.externalUrl)]
+        [t.name, t.summary, t.projects.join(" "), t.notes, t.stakeholders.join(" "), externalLabel(t.externalUrl)]
           .join(" ").toLowerCase().includes(needle));
     const dir = sort === "score" ? -1 : 1;
     return list.sort((a, b) => {

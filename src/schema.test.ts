@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  type Ticket, DEFAULT_SETTINGS, backlog, computeFlags, derive, externalLabel, findSprint, forProject,
-  inSprint, isFrozen, parseDate, queueHealth, scoreTicket, sprintNames,
+  type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog, computeFlags,
+  derive, externalLabel, findSprint, forProject, inSprint, isFrozen, parseDate, queueHealth, scoreTicket,
+  sprintNames,
 } from "./schema";
 import {
   HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, freshStore,
@@ -10,11 +11,17 @@ import {
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
 
+/** A due date N days from the real clock, since derive() defaults to now. */
+const isoFromNow = (days: number): string => {
+  const d = new Date(Date.now() + days * 86_400_000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 const mk = (over: Partial<Ticket>): Ticket => ({
   id: 1, name: "x", summary: "s", projects: ["Atlas"], externalUrl: null,
-  dueDate: null, ownerType: "Team", owner: "o", stakeholders: ["S"], type: "Should", size: "M",
+  dueDate: null, estimate: 2, type: "Should", stakeholders: ["S"], notes: "",
   state: "New", opened: null, sprint: null, carryovers: 0,
-  lastTouched: null, closed: null, nextAction: "",
+  lastTouched: null, closed: null,
   ...over,
 });
 
@@ -23,11 +30,11 @@ const NOW = new Date("2026-10-18T12:00:00Z");
 
 describe("derivation matches the spreadsheet", () => {
   const caseA = mk({
-    type: "Critical", size: "M", state: "In Progress", opened: "2026-09-08",
+    type: "Critical", estimate: 2, state: "In Progress", opened: "2026-09-08",
     dueDate: "2026-11-01", sprint: "v0.23", carryovers: 1, lastTouched: "2026-10-15",
   });
   const caseB = mk({
-    type: "Should", size: "S", state: "Accepted-Backlog", opened: "2026-06-20",
+    type: "Should", estimate: 1, state: "Accepted-Backlog", opened: "2026-06-20",
     dueDate: null, carryovers: 0, lastTouched: "2026-09-23",
   });
 
@@ -176,20 +183,31 @@ describe("editing in the browser (store CRUD)", () => {
 });
 
 describe("field discipline", () => {
-  it("stores only fields that drive something", () => {
-    const expected = [
-      "name", "summary", "projects", "externalUrl", "dueDate", "ownerType", "owner",
-      "stakeholders", "type", "size", "state", "opened", "sprint", "carryovers", "lastTouched",
-      "closed", "nextAction",
-    ];
-    expect(Object.keys(blankTicket()).sort()).toEqual(expected.sort());
+  it("stores exactly the core, optional and background fields — nothing more", () => {
+    const expected = [...CORE_FIELDS, ...OPTIONAL_FIELDS, ...BACKGROUND_FIELDS].sort();
+    expect(Object.keys(blankTicket()).sort()).toEqual(expected);
   });
 
-  it("has no notes field and no separately stored external key", () => {
+  it("the three tiers do not overlap", () => {
+    const seen = new Set<string>();
+    for (const f of [...CORE_FIELDS, ...OPTIONAL_FIELDS, ...BACKGROUND_FIELDS]) {
+      expect(seen.has(f)).toBe(false);
+      seen.add(f);
+    }
+  });
+
+  it("carries nothing that was cut", () => {
     const keys = Object.keys(blankTicket());
-    expect(keys).not.toContain("notes");
-    expect(keys).not.toContain("externalKey");
-    expect(keys).not.toContain("expectedDurations");
+    for (const gone of ["owner", "ownerType", "size", "nextAction", "externalKey", "expectedDurations"]) {
+      expect(keys).not.toContain(gone);
+    }
+  });
+
+  it("flags an estimate that cannot finish before the due date", () => {
+    const soon = mk({ estimate: 3, dueDate: isoFromNow(10) });
+    expect(derive(soon, DEFAULT_SETTINGS).overEstimate).toBe(true);
+    const comfortable = mk({ estimate: 1, dueDate: isoFromNow(60) });
+    expect(derive(comfortable, DEFAULT_SETTINGS).overEstimate).toBe(false);
   });
 });
 
@@ -243,7 +261,9 @@ describe("exports", () => {
     expect(lines[0]).toContain("id,name,summary,projects");
     expect(lines[0]).toContain("dueDate");
     expect(lines[0]).toContain("externalUrl");
-    expect(lines[0]).not.toContain("notes");
+    expect(lines[0]).toContain("notes");
+    expect(lines[0]).toContain("estimate");
+    for (const gone of ["owner", "size", "nextAction"]) expect(lines[0]).not.toContain(gone);
     expect(lines).toHaveLength(s.tickets.length + 1);
   });
 

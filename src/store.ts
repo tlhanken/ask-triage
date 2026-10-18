@@ -111,6 +111,24 @@ function migrateSprints(sprints: unknown): Sprint[] {
   );
 }
 
+/**
+ * Tickets predate the tier split. Drop what the model no longer carries and
+ * default what is new, rather than reseeding and losing the history.
+ * `size` (S/M/L) becomes an estimate in sprints; owner, owner-type and
+ * next-action are gone.
+ */
+function migrateTicket(raw: unknown): Ticket {
+  const t = { ...(raw as Record<string, unknown>) };
+  delete t.ownerType;
+  delete t.owner;
+  delete t.size;
+  delete t.nextAction;
+  if (typeof t.estimate !== "number") t.estimate = 2;
+  if (typeof t.notes !== "string") t.notes = "";
+  if (!Array.isArray(t.stakeholders)) t.stakeholders = [];
+  return t as unknown as Ticket;
+}
+
 export function load(): Store {
   try {
     const raw = localStorage.getItem(KEY);
@@ -122,6 +140,7 @@ export function load(): Store {
     return {
       ...parsed,
       history: Array.isArray(parsed.history) ? parsed.history : [],
+      tickets: parsed.tickets.map(migrateTicket),
       // releases used to be plain names; give them dates rather than reseeding
       settings: { ...parsed.settings, sprints: migrateSprints(parsed.settings.sprints) },
     };
@@ -148,25 +167,23 @@ export function clear(): void {
 
 export const defaultRevisitDays = 90;
 
-/** Only the fields a human decides. The rest are stamped or loop-driven. */
+/** Only the fields a person decides. Nothing else is asked for. */
 export const blankTicket = (): Omit<Ticket, "id"> => ({
   name: "",
   summary: "",
   projects: [],
   externalUrl: null,
   dueDate: null,
-  ownerType: "Team",
-  owner: "",
-  stakeholders: [],
+  estimate: 2,
   type: "Should",
-  size: "M",
+  stakeholders: [],
+  notes: "",
   state: "New",
   opened: iso(new Date()),
   sprint: null,
   carryovers: 0,
   lastTouched: iso(new Date()),
   closed: null,
-  nextAction: "",
 });
 
 // ---------------------------------------------------------------- ticket CRUD

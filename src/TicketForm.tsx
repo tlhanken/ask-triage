@@ -1,29 +1,31 @@
 import { useState } from "react";
 import {
-  type ProjectId, type Ticket, OWNER_TYPES, PROJECTS, SIZES, STATES, TICKET_TYPES,
+  type ProjectId, type Ticket, ESTIMATES, estimateLabel, PROJECTS, TICKET_TYPES,
 } from "./schema";
 
 /**
- * The browser editor.
+ * The browser editor, in three tiers.
  *
- * FIELD DISCIPLINE: this asks only for what a person decides. Opened,
- * Last-touched and Closed are stamped by the app; Sprint and State are
- * set by the triage loop and the sprint board. They appear here only so
- * a correction is possible, and they sit at the bottom on purpose.
+ * CORE is asked for, every time. OPTIONAL is one click away and never required.
+ * BACKGROUND is set by the app or the triage loop and is shown read-only — the
+ * only thing actionable there is recording a carryover, which is a thing that
+ * happened, not a field to fill in.
  */
 
 interface Props {
   initial: Omit<Ticket, "id">;
   editingId?: number;
-  sprints: string[];
   onSave: (draft: Omit<Ticket, "id">, id?: number) => void;
   onCancel: () => void;
   onDelete?: (id: number) => void;
 }
 
-export default function TicketForm({ initial, editingId, sprints, onSave, onCancel, onDelete }: Props) {
-  const [d, setD] = useState<Omit<Ticket, "id">>({ ...initial, projects: [...initial.projects] });
-  const [stakeholderText, setStakeholderText] = useState(initial.stakeholders.join(", "));
+export default function TicketForm({ initial, editingId, onSave, onCancel, onDelete }: Props) {
+  const [d, setD] = useState<Omit<Ticket, "id">>({
+    ...initial,
+    projects: [...initial.projects],
+    stakeholders: [...initial.stakeholders],
+  });
   const set = <K extends keyof Omit<Ticket, "id">>(k: K, v: Omit<Ticket, "id">[K]) =>
     setD((cur) => ({ ...cur, [k]: v }));
 
@@ -38,11 +40,10 @@ export default function TicketForm({ initial, editingId, sprints, onSave, onCanc
       ...d,
       name: d.name.trim(),
       summary: d.summary.trim(),
-      owner: d.owner.trim(),
-      stakeholders: stakeholderText.split(",").map((s) => s.trim()).filter(Boolean),
+      notes: d.notes.trim(),
+      stakeholders: d.stakeholders.map((s) => s.trim()).filter(Boolean),
       externalUrl: d.externalUrl?.trim() || null,
       dueDate: d.dueDate || null,
-      sprint: d.sprint || null,
     };
     if (!draft.name) return;
     onSave(draft, editingId);
@@ -87,64 +88,53 @@ export default function TicketForm({ initial, editingId, sprints, onSave, onCanc
             <input type="date" value={d.dueDate ?? ""} onChange={(e) => set("dueDate", e.target.value)} />
           </label>
 
-          <label>Type
-            <select value={d.type} onChange={(e) => set("type", e.target.value as Ticket["type"])}>
-              {TICKET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          <label>Estimated completion
+            <select value={d.estimate}
+                    onChange={(e) => set("estimate", Number(e.target.value) as Ticket["estimate"])}>
+              {ESTIMATES.map((n) => <option key={n} value={n}>{estimateLabel(n)}</option>)}
             </select>
-          </label>
-
-          <label>Size
-            <select value={d.size} onChange={(e) => set("size", e.target.value as Ticket["size"])}>
-              {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-
-          <label>Owner type
-            <select value={d.ownerType} onChange={(e) => set("ownerType", e.target.value as Ticket["ownerType"])}>
-              {OWNER_TYPES.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
-          </label>
-
-          <label>Owner
-            <input value={d.owner} onChange={(e) => set("owner", e.target.value)} placeholder="PartnerCo / J. Alvarez" />
-          </label>
-
-          <label className="wide">Stakeholders (comma separated)
-            <input value={stakeholderText} onChange={(e) => setStakeholderText(e.target.value)}
-                   placeholder="Dana R., Sam T." />
-          </label>
-
-          <label className="wide">Next action
-            <input value={d.nextAction} onChange={(e) => set("nextAction", e.target.value)}
-                   placeholder="What happens next, and who owns it" />
-          </label>
-
-          <div className="wide stamped">
-            <div className="flabel">Set by the loop — edit only to correct</div>
-          </div>
-
-          <label>Sprint
-            <select value={d.sprint ?? ""} onChange={(e) => set("sprint", e.target.value)}>
-              <option value="">— backlog —</option>
-              {sprints.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-
-          <label>State
-            <select value={d.state} onChange={(e) => set("state", e.target.value as Ticket["state"])}>
-              {STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-
-          <label>Carryovers
-            <input type="number" min={0} value={d.carryovers}
-                   onChange={(e) => set("carryovers", Math.max(0, Number(e.target.value) || 0))} />
-          </label>
-
-          <label>Opened
-            <input type="date" value={d.opened ?? ""} onChange={(e) => set("opened", e.target.value)} />
           </label>
         </div>
+
+        <details className="tier">
+          <summary>Optional fields <span className="dim small">type, stakeholders, notes — never required</span></summary>
+          <div className="form">
+            <label>Type
+              <select value={d.type} onChange={(e) => set("type", e.target.value as Ticket["type"])}>
+                {TICKET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+
+            <label>Stakeholders (comma separated)
+              <input value={d.stakeholders.join(", ")}
+                     onChange={(e) => set("stakeholders", e.target.value.split(",").map((s) => s.trim()))}
+                     placeholder="Dana R., Sam T." />
+            </label>
+
+            <label className="wide">Notes
+              <textarea rows={3} value={d.notes} onChange={(e) => set("notes", e.target.value)}
+                        placeholder="Context you will otherwise forget" />
+            </label>
+          </div>
+        </details>
+
+        <details className="tier">
+          <summary>Background metadata <span className="dim small">set by the app and the triage loop</span></summary>
+          <dl className="meta">
+            <dt>State</dt><dd>{d.state}</dd>
+            <dt>Release</dt><dd>{d.sprint ?? "backlog"}</dd>
+            <dt>Opened</dt><dd>{d.opened ?? "—"}</dd>
+            <dt>Last touched</dt><dd>{d.lastTouched ?? "—"}</dd>
+            <dt>Closed</dt><dd>{d.closed ?? "—"}</dd>
+            <dt>Carried over</dt>
+            <dd>
+              {d.carryovers} sprint{d.carryovers === 1 ? "" : "s"}
+              <button type="button" className="mini" onClick={() => set("carryovers", d.carryovers + 1)}>
+                record a carryover
+              </button>
+            </dd>
+          </dl>
+        </details>
 
         <div className="sheet-foot">
           {editingId && onDelete && (

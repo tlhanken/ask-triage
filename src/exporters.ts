@@ -53,18 +53,18 @@ export function projectsToMarkdown(s: Store, now = new Date()): string {
 }
 
 export function registerToCsv(s: Store, now = new Date()): string {
-  const cols = ["id", "name", "summary", "projects", "ownerType", "owner", "stakeholders", "type", "size",
+  const cols = ["id", "name", "summary", "projects", "type", "stakeholders", "notes", "estimate",
     "state", "opened", "dueDate", "sprint", "carryovers", "lastTouched", "closed", "score", "flags",
-    "externalUrl", "nextAction"];
+    "externalUrl"];
   const q = (v: unknown): string => {
     const t = v === null || v === undefined ? "" : String(v);
     return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
   };
   const rows = s.tickets.map((t) => {
     const d: DerivedTicket = derive(t, s.settings, now);
-    return [d.id, d.name, d.summary, d.projects.join("; "), d.ownerType, d.owner, d.stakeholders.join("; "),
-      d.type, d.size, d.state, d.opened, d.dueDate, d.sprint, d.carryovers, d.lastTouched, d.closed,
-      d.score, d.flags.join("|"), d.externalUrl, d.nextAction]
+    return [d.id, d.name, d.summary, d.projects.join("; "), d.type, d.stakeholders.join("; "), d.notes,
+      d.estimate, d.state, d.opened, d.dueDate, d.sprint, d.carryovers, d.lastTouched, d.closed,
+      d.score, d.flags.join("|"), d.externalUrl]
       .map(q).join(",");
   });
   return [cols.join(","), ...rows].join("\n");
