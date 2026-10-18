@@ -1,0 +1,355 @@
+import { describe, expect, it } from "vitest";
+import {
+  type Ticket, DEFAULT_SETTINGS, backlog, computeFlags, derive, externalLabel, forProject, inSprint,
+  queueHealth, scoreTicket,
+} from "./schema";
+import {
+  HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, freshStore,
+  moveTicketToSprint, optimizePlan, recordDecision, removeSprint, revertTo, shiftSprint, stats,
+  acceptedThisSprint, undecided, undoLast, updateTicket, withHistory,
+} from "./store";
+import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
+
+const mk = (over: Partial<Ticket>): Ticket => ({
+  id: 1, name: "x", summary: "s", projects: ["Atlas"], externalUrl: null,
+  dueDate: null, ownerType: "Team", owner: "o", stakeholders: ["S"], type: "Should", size: "M",
+  state: "New", opened: null, sprint: null, carryovers: 0,
+  lastTouched: null, closed: null, nextAction: "",
+  ...over,
+});
+
+// Fixed clock: these numbers are the ones the spreadsheet computed for the same rows.
+const NOW = new Date("2026-10-18T12:00:00Z");
+
+describe("derivation matches the spreadsheet", () => {
+  const caseA = mk({
+    type: "Critical", size: "M", state: "In Progress", opened: "2026-09-08",
+    dueDate: "2026-11-01", sprint: "v0.23", carryovers: 1, lastTouched: "2026-10-15",
+  });
+  const caseB = mk({
+    type: "Should", size: "S", state: "Accepted-Backlog", opened: "2026-06-20",
+    dueDate: null, carryovers: 0, lastTouched: "2026-09-23",
+  });
+
+  it("scores the critical item at 176 and flags DATE-RISK", () => {
+    expect(scoreTicket(caseA, DEFAULT_SETTINGS, NOW)).toBe(176);
+    expect(computeFlags(caseA, DEFAULT_SETTINGS, NOW)).toEqual(["DATE-RISK"]);
+  });
+
+  it("scores the stale backlog item at 44 and flags STALE + NO-DATE-OLD", () => {
+    expect(scoreTicket(caseB, DEFAULT_SETTINGS, NOW)).toBe(44);
+    expect(computeFlags(caseB, DEFAULT_SETTINGS, NOW)).toEqual(["STALE", "NO-DATE-OLD"]);
+  });
+
+  it("does not flag closed tickets", () => {
+    const done = mk({ state: "Done", opened: "2026-01-01", lastTouched: "2026-01-01" });
+    expect(computeFlags(done, DEFAULT_SETTINGS, NOW)).toEqual([]);
+  });
+
+  it("SLIPPED fires once carryovers reach the threshold", () => {
+    expect(computeFlags(mk({ state: "In Progress", carryovers: 1 }), DEFAULT_SETTINGS, NOW))
+      .not.toContain("SLIPPED");
+    expect(computeFlags(mk({ state: "In Progress", carryovers: 2 }), DEFAULT_SETTINGS, NOW))
+      .toContain("SLIPPED");
+  });
+
+  it("UNPLANNED fires for a critical with no sprint", () => {
+    expect(computeFlags(mk({ type: "Critical", sprint: null }), DEFAULT_SETTINGS, NOW))
+      .toContain("UNPLANNED");
+  });
+
+  it("Little's Law: 200 open at 5/week is a 40-week wait", () => {
+    const tickets = Array.from({ length: 200 }, (_, i) => mk({ id: i + 1 }));
+    expect(queueHealth(tickets, DEFAULT_SETTINGS).avgWaitWeeks).toBe(40);
+  });
+
+  it("derive exposes a human wait label", () => {
+    expect(derive(mk({ opened: "2026-10-08" }), DEFAULT_SETTINGS, NOW).waitedLabel).toBe("10d");
+  });
+
+  it("the external ticket label is derived from the link, not stored", () => {
+    expect(externalLabel("https://partnerco.atlassian.net/browse/PX-118")).toBe("PX-118");
+    expect(externalLabel(null)).toBe("");
+    expect(externalLabel(undefined)).toBe("");
+  });
+});
+
+describe("version sprints", () => {
+  it("orders v0.x names numerically, not lexically", () => {
+    expect(compareSprints("v0.9", "v0.21")).toBeLessThan(0);
+    expect(compareSprints("v0.21", "v0.22")).toBeLessThan(0);
+    expect(["v0.22", "v0.9", "v0.21"].sort(compareSprints)).toEqual(["v0.9", "v0.21", "v0.22"]);
+  });
+
+  it("the seeded sprint columns run newest-release first", () => {
+    const s = freshStore();
+    expect(s.settings.sprints).toEqual(["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
+    expect(s.settings.currentSprint).toBe("v0.23");
+  });
+
+  it("the board order is the stored order, and it is reorderable", () => {
+    const s = freshStore();
+    const s1 = shiftSprint(s, "v0.23", -1);
+    expect(s1.settings.sprints).toEqual(["v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
+    expect(shiftSprint(s1, "v0.23", 1).settings.sprints).toEqual(s.settings.sprints);
+  });
+
+  it("a sprint cannot be shifted past either end", () => {
+    const s = freshStore();
+    expect(shiftSprint(s, "v0.25", -1).settings.sprints).toEqual(s.settings.sprints);
+    expect(shiftSprint(s, "v0.21", 1).settings.sprints).toEqual(s.settings.sprints);
+  });
+
+  it("one column per sprint, and a backlog for the unscheduled", () => {
+    const s = freshStore();
+    const s1 = moveTicketToSprint(s, 1, "v0.24", NOW);
+    expect(inSprint(s1.tickets, "v0.24").map((t) => t.id)).toEqual([1]);
+    expect(s1.tickets.find((t) => t.id === 1)!.state).toBe("Committed");
+    const s2 = moveTicketToSprint(s1, 1, null, NOW);
+    expect(inSprint(s2.tickets, "v0.24")).toHaveLength(0);
+    expect(s2.tickets.find((t) => t.id === 1)!.state).toBe("Accepted-Backlog");
+    expect(backlog(s2.tickets).some((t) => t.id === 1)).toBe(true);
+  });
+
+  it("a new sprint is slotted in by version, newest left", () => {
+    const s = freshStore();
+    const s1 = addSprint(s, "v0.26");
+    expect(s1.settings.sprints[0]).toBe("v0.26");
+    const s2 = addSprint(s1, "v0.20");
+    expect(s2.settings.sprints[s2.settings.sprints.length - 1]).toBe("v0.20");
+    expect(addSprint(s2, "v0.26").settings.sprints).toHaveLength(s2.settings.sprints.length);
+  });
+
+  it("removing a sprint unschedules its tickets instead of deleting them", () => {
+    const s = moveTicketToSprint(freshStore(), 2, "v0.22", NOW);
+    const s1 = removeSprint(s, "v0.22");
+    expect(s1.settings.sprints).not.toContain("v0.22");
+    expect(s1.tickets.find((t) => t.id === 2)!.sprint).toBeNull();
+    expect(s1.tickets).toHaveLength(s.tickets.length);
+  });
+});
+
+describe("projects", () => {
+  it("a ticket can belong to several projects at once", () => {
+    const s = freshStore();
+    const multi = updateTicket(s, 1, { projects: ["Atlas", "Cinder"] }, NOW);
+    expect(forProject(multi.tickets, "Atlas").some((t) => t.id === 1)).toBe(true);
+    expect(forProject(multi.tickets, "Cinder").some((t) => t.id === 1)).toBe(true);
+    expect(forProject(multi.tickets, "Delta").some((t) => t.id === 1)).toBe(false);
+  });
+});
+
+describe("editing in the browser (store CRUD)", () => {
+  it("creates a ticket with a fresh id", () => {
+    const s = freshStore();
+    const s1 = createTicket(s, blankTicket());
+    expect(s1.tickets).toHaveLength(s.tickets.length + 1);
+    expect(s1.nextTicketId).toBeGreaterThan(s.nextTicketId);
+    expect(new Set(s1.tickets.map((t) => t.id)).size).toBe(s1.tickets.length);
+  });
+
+  it("patches a ticket and re-stamps lastTouched", () => {
+    const s = freshStore();
+    const s1 = updateTicket(s, 3, { name: "Renamed", type: "Critical" }, NOW);
+    const t = s1.tickets.find((x) => x.id === 3)!;
+    expect(t.name).toBe("Renamed");
+    expect(t.type).toBe("Critical");
+    expect(t.lastTouched).toBe("2026-10-18");
+  });
+
+  it("deletes a ticket and the decisions that referenced it", () => {
+    const s = recordDecision(freshStore(), 2, "Defer", "later", null, NOW);
+    expect(s.decisions).toHaveLength(1);
+    const s1 = deleteTicket(s, 2);
+    expect(s1.tickets.some((t) => t.id === 2)).toBe(false);
+    expect(s1.decisions).toHaveLength(0);
+  });
+
+  it("does not mutate the array it was given", () => {
+    const s = freshStore();
+    const before = s.tickets.length;
+    updateTicket(s, 1, { name: "changed" }, NOW);
+    expect(s.tickets).toHaveLength(before);
+    expect(s.tickets.find((t) => t.id === 1)!.name).not.toBe("changed");
+  });
+});
+
+describe("field discipline", () => {
+  it("stores only fields that drive something", () => {
+    const expected = [
+      "name", "summary", "projects", "externalUrl", "dueDate", "ownerType", "owner",
+      "stakeholders", "type", "size", "state", "opened", "sprint", "carryovers", "lastTouched",
+      "closed", "nextAction",
+    ];
+    expect(Object.keys(blankTicket()).sort()).toEqual(expected.sort());
+  });
+
+  it("has no notes field and no separately stored external key", () => {
+    const keys = Object.keys(blankTicket());
+    expect(keys).not.toContain("notes");
+    expect(keys).not.toContain("externalKey");
+    expect(keys).not.toContain("expectedDurations");
+  });
+});
+
+describe("decision loop", () => {
+  it("accepting moves the ticket into the sprint and records a decision", () => {
+    const s0 = freshStore();
+    const first = undecided(s0)[0];
+    const s1 = recordDecision(s0, first.id, "Accept", "", null, NOW);
+    const moved = s1.tickets.find((t) => t.id === first.id)!;
+    expect(moved.state).toBe("Committed");
+    expect(moved.sprint).toBe(s0.settings.currentSprint);
+    expect(s1.decisions).toHaveLength(1);
+    expect(acceptedThisSprint(s1)).toBe(1);
+    expect(undecided(s1).length).toBe(undecided(s0).length - 1);
+  });
+
+  it("declining closes the ticket", () => {
+    const s0 = freshStore();
+    const id = undecided(s0)[0].id;
+    const s1 = recordDecision(s0, id, "Decline", "not worth it", null, NOW);
+    expect(s1.tickets.find((t) => t.id === id)!.state).toBe("Won't Do");
+    expect(stats(s1).declined).toBe(1);
+  });
+
+  it("undo restores the exact prior ticket and drops the decision", () => {
+    const s0 = freshStore();
+    const id = undecided(s0)[0].id;
+    const before = s0.tickets.find((t) => t.id === id)!;
+    const s1 = recordDecision(s0, id, "Defer", "later", "2027-01-01", NOW);
+    const s2 = undoLast(s1);
+    expect(s2.decisions).toHaveLength(0);
+    expect(s2.tickets.find((t) => t.id === id)).toEqual(before);
+  });
+
+  it("defer keeps the reason and revisit date for the digest", () => {
+    const s0 = freshStore();
+    const id = undecided(s0)[0].id;
+    const s1 = recordDecision(s0, id, "Defer", "behind SSO", "2027-01-15", NOW);
+    const md = decisionsToMarkdown(s1, NOW);
+    expect(md).toContain("Revel priority tracker");
+    expect(md).toContain("Deferred (1)");
+    expect(md).toContain("behind SSO");
+    expect(md).toContain("revisit 2027-01-15");
+  });
+});
+
+describe("exports", () => {
+  it("csv carries the ticket fields you named, plus derived score and flags", () => {
+    const s = freshStore();
+    const lines = registerToCsv(s, NOW).trim().split("\n");
+    expect(lines[0]).toContain("id,name,summary,projects");
+    expect(lines[0]).toContain("dueDate");
+    expect(lines[0]).toContain("externalUrl");
+    expect(lines[0]).not.toContain("notes");
+    expect(lines).toHaveLength(s.tickets.length + 1);
+  });
+
+  it("project export groups open tickets under each project", () => {
+    const md = projectsToMarkdown(freshStore(), NOW);
+    expect(md).toContain("## Atlas (");
+    expect(md).toContain("## Cinder (");
+  });
+
+  it("json round-trips and carries derived fields", () => {
+    const s = freshStore();
+    const parsed = JSON.parse(toJson(s, NOW));
+    expect(parsed.tickets).toHaveLength(s.tickets.length);
+    expect(parsed.tickets[0]).toHaveProperty("score");
+    expect(parsed.tickets[0]).toHaveProperty("flags");
+  });
+});
+
+describe("history and revert", () => {
+  it("records the state before a change, under a label", () => {
+    const s = freshStore();
+    const s1 = withHistory(s, "move 1 to v0.24", (cur) => moveTicketToSprint(cur, 1, "v0.24", NOW), NOW);
+    expect(s1.history).toHaveLength(1);
+    expect(s1.history[0].label).toBe("move 1 to v0.24");
+    expect(s1.tickets.find((t) => t.id === 1)!.sprint).toBe("v0.24");
+  });
+
+  it("a mutation that changes nothing leaves no snapshot behind", () => {
+    const s = freshStore();
+    expect(withHistory(s, "no-op", (cur) => cur, NOW).history).toHaveLength(0);
+  });
+
+  it("reverts tickets and settings to before a change", () => {
+    const s = freshStore();
+    const s1 = withHistory(s, "move 1", (cur) => moveTicketToSprint(cur, 1, "v0.24", NOW), NOW);
+    expect(revertTo(s1, 0, NOW).tickets.find((t) => t.id === 1)!.sprint).toBeNull();
+  });
+
+  it("a revert is itself recorded, so it can be undone", () => {
+    const s = freshStore();
+    const s1 = withHistory(s, "move 1", (cur) => moveTicketToSprint(cur, 1, "v0.24", NOW), NOW);
+    const s2 = revertTo(s1, 0, NOW);
+    expect(s2.history).toHaveLength(2);
+    expect(s2.history[1].label).toContain("revert");
+    expect(revertTo(s2, 1, NOW).tickets.find((t) => t.id === 1)!.sprint).toBe("v0.24");
+  });
+
+  it("keeps the history bounded", () => {
+    let s = freshStore();
+    for (let i = 0; i < HISTORY_CAP + 5; i++) {
+      s = withHistory(s, `change ${i}`, (cur) => updateTicket(cur, 1, { carryovers: i }, NOW), NOW);
+    }
+    expect(s.history).toHaveLength(HISTORY_CAP);
+    expect(s.history[s.history.length - 1].label).toBe(`change ${HISTORY_CAP + 4}`);
+  });
+
+  it("reverting a delete restores the ticket without reusing its id", () => {
+    const s = freshStore();
+    const nextId = s.nextTicketId;
+    const s1 = withHistory(s, "delete 1", (cur) => deleteTicket(cur, 1), NOW);
+    const s2 = revertTo(s1, 0, NOW);
+    expect(s2.tickets.some((t) => t.id === 1)).toBe(true);
+    expect(s2.nextTicketId).toBe(nextId);
+  });
+});
+
+describe("auto-optimize", () => {
+  it("only proposes for open tickets that have no release", () => {
+    const s = moveTicketToSprint(freshStore(), 1, "v0.24", NOW);
+    const plan = optimizePlan(s, NOW);
+    expect(plan.map((m) => m.id)).not.toContain(1);
+    for (const m of plan) {
+      expect(s.tickets.find((t) => t.id === m.id)!.sprint).toBeNull();
+    }
+  });
+
+  it("never proposes a release that has already shipped", () => {
+    const plan = optimizePlan(freshStore(), NOW);
+    expect(plan.length).toBeGreaterThan(0);
+    for (const m of plan) expect(["v0.23", "v0.24", "v0.25"]).toContain(m.to);
+  });
+
+  it("respects capacity per release", () => {
+    const s = freshStore();
+    const per = new Map<string, number>();
+    for (const m of optimizePlan(s, NOW)) per.set(m.to, (per.get(m.to) ?? 0) + 1);
+    for (const [, n] of per) expect(n).toBeLessThanOrEqual(s.settings.commitTargetPerSprint);
+  });
+
+  it("places dated work before undated work", () => {
+    const s = freshStore();
+    const plan = optimizePlan(s, NOW);
+    const dated = plan.map((m) => Boolean(s.tickets.find((t) => t.id === m.id)!.dueDate));
+    const firstUndated = dated.indexOf(false);
+    const lastDated = dated.lastIndexOf(true);
+    if (firstUndated !== -1 && lastDated !== -1) expect(firstUndated).toBeGreaterThan(lastDated);
+    expect(plan[0].reason).toMatch(/due \d{4}-\d{2}-\d{2}/);
+  });
+
+  it("applying commits the moves and the whole batch is revertible", () => {
+    const s = freshStore();
+    const plan = optimizePlan(s, NOW);
+    const s1 = withHistory(s, "auto-optimize", (cur) => applyPlan(cur, plan, NOW), NOW);
+    const moved = s1.tickets.find((t) => t.id === plan[0].id)!;
+    expect(moved.sprint).toBe(plan[0].to);
+    expect(moved.state).toBe("Committed");
+    const s2 = revertTo(s1, s1.history.length - 1, NOW);
+    expect(s2.tickets.find((t) => t.id === plan[0].id)!.sprint).toBeNull();
+  });
+});
