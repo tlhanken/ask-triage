@@ -9,6 +9,7 @@ import {
   derive,
   estimateLabel,
   findSprint,
+  loadUnits,
   hasShipped,
   iso,
   isFrozen,
@@ -341,16 +342,20 @@ export interface OptimizeResult {
   moves: Move[];
   /** Releases that could take work, in the order they were considered. */
   eligible: string[];
-  /** Eligible, but already at capacity. */
+  /** Eligible, but already at capacity in work units. */
   full: string[];
+  /** Eligible, and left over capacity — which a proposal never causes itself. */
+  over: string[];
   /** Releases with no release date: usable, but not checkable against a due date. */
   undated: string[];
   /** Releases left out, and why. */
   skipped: { name: string; reason: "shipped" | "frozen" }[];
   /** Open, unscheduled tickets that were considered. */
   candidates: number;
-  /** Candidates that got no release because everything eligible was full. */
+  /** Candidates that got no release because nothing had room for them. */
   unplaced: number;
+  /** Candidates whose own estimate exceeds capacity, so no release can take them. */
+  tooBig: number;
 }
 
 /**
@@ -385,9 +390,9 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
     return compareSprints(a.name, b.name);
   });
 
-  const load = new Map(
-    eligible.map((sp) => [sp.name, s.tickets.filter((t) => t.sprint === sp.name && isOpen(t)).length]),
-  );
+  // Load in WORK UNITS, not head count. A four-sprint ticket is four units of
+  // the team's capacity, so it cannot be counted the same as a one-sprint one.
+  const load = new Map(eligible.map((sp) => [sp.name, loadUnits(s.tickets, sp.name)]));
 
   const candidates = s.tickets
     .filter((t) => isOpen(t) && !t.sprint)
@@ -400,15 +405,26 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
     });
 
   const moves: Move[] = [];
+  let tooBig = 0;
   for (const t of candidates) {
-    const room = eligible.filter((sp) => load.get(sp.name)! < target);
-    if (room.length === 0) break;                           // everything eligible is full
+    // The WHOLE estimate has to fit. Capacity is work, so room that is already
+    // committed elsewhere cannot absorb this ticket — which is what stops the
+    // proposal from shoving everything into the earliest releases.
+    const room = eligible.filter((sp) => load.get(sp.name)! + t.estimate <= target);
+    if (room.length === 0) {
+      // Nothing takes this one. If not even a one-unit ticket would fit, nothing
+      // later will either; otherwise it is just too large for the room left, and
+      // a smaller ticket may still fit.
+      if (!eligible.some((sp) => load.get(sp.name)! + 1 <= target)) break;
+      if (t.estimate > target) tooBig += 1;
+      continue;
+    }
     // The release has to ship on or before the due date to be any use.
     const inTime = t.dueDate
       ? room.find((sp) => sp.release !== null && sp.release <= t.dueDate!)
       : room[0];
     const sprint = inTime ?? room[0];
-    const next = load.get(sprint.name)! + 1;
+    const next = load.get(sprint.name)! + t.estimate;
     load.set(sprint.name, next);
 
     const bits: string[] = [];
@@ -430,7 +446,7 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
       name: t.name,
       from: null,
       to: sprint.name,
-      reason: `${bits.join(", ")} → ${sprint.release ? `ships ${sprint.release}` : "no release date"} (${next}/${target})`,
+      reason: `${bits.join(", ")} → ${sprint.release ? `ships ${sprint.release}` : "no release date"} (${next}/${target} units)`,
       warning,
     });
   }
@@ -439,10 +455,12 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
     moves,
     eligible: eligible.map((sp) => sp.name),
     full: eligible.filter((sp) => load.get(sp.name)! >= target).map((sp) => sp.name),
+    over: eligible.filter((sp) => load.get(sp.name)! > target).map((sp) => sp.name),
     undated: eligible.filter((sp) => sp.release === null).map((sp) => sp.name),
     skipped,
     candidates: candidates.length,
     unplaced: candidates.length - moves.length,
+    tooBig,
   };
 }
 
@@ -455,6 +473,8 @@ export function explainPlan(r: OptimizeResult): string {
   if (shipped.length) constraints.push(`${shipped.join(", ")} already shipped`);
   if (r.undated.length) constraints.push(`${r.undated.join(", ")} have no release date`);
   if (r.full.length) constraints.push(`${r.full.join(", ")} at capacity`);
+  if (r.over.length) constraints.push(`${r.over.join(", ")} already over capacity`);
+  if (r.tooBig > 0) constraints.push(`${r.tooBig} too large for any release`);
   if (r.candidates === 0) constraints.push("no open ticket is unscheduled");
   else if (r.unplaced > 0) constraints.push(`${r.unplaced} left unplaced`);
 

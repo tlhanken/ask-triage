@@ -178,6 +178,32 @@ const isoFrom = (now: Date, inDays: number): string => {
 
 export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
 
+/**
+ * A release's load, in WORK UNITS: the sum of its open tickets' estimates.
+ *
+ * Counting tickets instead treats a three-sprint ticket as equal to a
+ * one-sprint ticket, which is how a release reads "8/8, at target" while
+ * carrying triple the work. Capacity and estimates then speak the same unit,
+ * in the same way the estimate already earns its place by being comparable to
+ * a due date.
+ */
+export function loadUnits(tickets: Ticket[], release: string): number {
+  return tickets
+    .filter((t) => isOpen(t) && t.sprint === release)
+    .reduce((n, t) => n + t.estimate, 0);
+}
+
+export type FillState = "room" | "full" | "over";
+
+/** How full a release is against its capacity, in work units. */
+export function fillState(
+  tickets: Ticket[], release: string, capacity: number,
+): { load: number; room: number; state: FillState } {
+  const load = loadUnits(tickets, release);
+  const room = capacity - load;
+  return { load, room, state: room < 0 ? "over" : room === 0 ? "full" : "room" };
+}
+
 export const findSprint = (s: Settings, name: string | null): Sprint | undefined =>
   name ? s.sprints.find((x) => x.name === name) : undefined;
 

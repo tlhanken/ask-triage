@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
-  computeFlags, derive, externalLabel, findSprint, forProject, hasShipped, inSprint, isFrozen, parseDate,
-  queueHealth, scoreTicket, sprintNames,
+  computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped, inSprint, isFrozen,
+  loadUnits, parseDate, queueHealth, scoreTicket, sprintNames,
 } from "./schema";
 import {
   HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, explainPlan,
@@ -347,11 +347,59 @@ describe("auto-optimize", () => {
     for (const m of plan) expect(["v0.23", "v0.24", "v0.25"]).toContain(m.to);
   });
 
-  it("respects capacity per release", () => {
+  it("respects capacity per release, measured in work units", () => {
     const s = freshStore();
     const per = new Map<string, number>();
-    for (const m of optimizePlan(s, NOW).moves) per.set(m.to, (per.get(m.to) ?? 0) + 1);
-    for (const [, n] of per) expect(n).toBeLessThanOrEqual(s.settings.commitTargetPerSprint);
+    for (const m of optimizePlan(s, NOW).moves) {
+      const t = s.tickets.find((x) => x.id === m.id)!;
+      per.set(m.to, (per.get(m.to) ?? 0) + t.estimate);
+    }
+    expect(per.size).toBeGreaterThan(0);
+    for (const [, units] of per) expect(units).toBeLessThanOrEqual(s.settings.commitTargetPerSprint);
+  });
+
+  it("measures fullness in work units, not head count", () => {
+    const t: Ticket[] = [
+      { ...blankTicket(), id: 1, estimate: 2, state: "New", sprint: "v0.23" },
+      { ...blankTicket(), id: 2, estimate: 3, state: "New", sprint: "v0.23" },
+    ];
+    expect(loadUnits(t, "v0.23")).toBe(5);            // two tickets, five units
+    expect(fillState(t, "v0.23", 8)).toEqual({ load: 5, room: 3, state: "room" });
+    expect(fillState(t, "v0.23", 5).state).toBe("full");
+    expect(fillState(t, "v0.23", 4).state).toBe("over");
+    expect(loadUnits(t, "v0.24")).toBe(0);
+  });
+
+  it("will not squeeze a three-unit ticket into two units of room", () => {
+    const s = freshStore();
+    const tight = {
+      ...s,
+      settings: { ...s.settings, commitTargetPerSprint: 4 },
+      tickets: [
+        { ...blankTicket(), id: 100, name: "already in flight", projects: ["Atlas" as const],
+          estimate: 2 as const, state: "Committed" as const, sprint: "v0.23" },
+        { ...blankTicket(), id: 101, name: "big ask", projects: ["Atlas" as const],
+          estimate: 3 as const, state: "New" as const, sprint: null },
+      ],
+    };
+    const move = optimizePlan(tight, NOW).moves.find((m) => m.id === 101)!;
+    expect(move).toBeTruthy();
+    expect(move.to).not.toBe("v0.23");                // 2 units left, 3 needed
+    expect(move.to).toBe("v0.24");
+  });
+
+  it("reports a ticket too large to fit any release", () => {
+    const s = freshStore();
+    const small = {
+      ...s,
+      settings: { ...s.settings, commitTargetPerSprint: 2 },
+      tickets: [{ ...blankTicket(), id: 100, name: "huge", projects: ["Atlas" as const],
+                  estimate: 3 as const, state: "New" as const, sprint: null }],
+    };
+    const r = optimizePlan(small, NOW);
+    expect(r.moves).toEqual([]);
+    expect(r.tooBig).toBe(1);
+    expect(explainPlan(r)).toMatch(/too large/);
   });
 
   it("places dated work before undated work", () => {

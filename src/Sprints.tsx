@@ -1,6 +1,6 @@
 import { useState, type DragEvent, type ReactNode } from "react";
 import {
-  type Ticket, backlog, daysSince, daysToRelease, derive, findSprint, hasShipped, inSprint,
+  type Ticket, backlog, daysSince, daysToRelease, derive, fillState, findSprint, hasShipped, inSprint,
   isFrozen, isOpen,
 } from "./schema";
 import { type Move, type OptimizeResult, type Store, explainPlan, optimizePlan, slippedIn } from "./store";
@@ -161,7 +161,7 @@ export default function Sprints({
         />
         {releases.map((sp, i) => {
           const ts = inSprint(store.tickets, sp.name).filter(isOpen);
-          const overCapacity = ts.length > target;
+          const { load, room, state } = fillState(store.tickets, sp.name, target);
           const frozen = isFrozen(sp);
           const shipped = hasShipped(sp);
           const toRelease = daysToRelease(sp);
@@ -170,7 +170,7 @@ export default function Sprints({
             <Column
               key={sp.name}
               title={sp.name}
-              subtitle={`${ts.length}${overCapacity ? ` — over ${target}` : `/${target}`}`}
+              subtitle={`${load}/${target} units — ${state === "over" ? `over by ${-room}` : state === "full" ? "FULL" : `${room} left`}`}
               dates={
                 <>
                   {sp.freeze ? `freeze ${sp.freeze}` : "no freeze"}
@@ -190,7 +190,7 @@ export default function Sprints({
                   )}
                 </>
               }
-              over={overCapacity}
+              over={state !== "room"}
               tickets={[...ts].sort(byScore)}
               store={store}
               onEdit={onEdit}
