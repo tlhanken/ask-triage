@@ -102,6 +102,29 @@ describe("sprint board", () => {
   });
 });
 
+describe("review sweep", () => {
+  it("steps through the tickets and reports what to look at", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Review$/ }));
+    expect(screen.getByText(/with something to look at/)).toBeTruthy();
+    expect(screen.getByText(/^1 of \d+$/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /next →/ }));
+    expect(screen.getByText(/^2 of \d+$/)).toBeTruthy();
+  });
+
+  it("can jump to the next ticket with something wrong, and edit it", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Review$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /next flagged/i }));
+    // the worst ticket is shown first, so it has at least one alert explained
+    expect(screen.getByRole("button", { name: /Edit ticket/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Edit ticket/ }));
+    expect(screen.getByRole("dialog", { name: /Edit ticket/ })).toBeTruthy();
+  });
+});
+
 describe("project view", () => {
   it("lists the tickets for a project", () => {
     render(<App />);

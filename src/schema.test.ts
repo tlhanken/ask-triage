@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
-  computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped, inSprint, isFrozen,
-  loadUnits, parseDate, queueHealth, scoreTicket, sprintNames,
+  audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped,
+  inSprint, isFrozen, loadUnits, parseDate, queueHealth, scoreTicket, sprintNames,
 } from "./schema";
 import {
   HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, explainPlan,
@@ -328,6 +328,90 @@ describe("history and revert", () => {
     const s2 = revertTo(s1, 0, NOW);
     expect(s2.tickets.some((t) => t.id === 1)).toBe(true);
     expect(s2.nextTicketId).toBe(nextId);
+  });
+});
+
+describe("review sweep", () => {
+  it("raises a gap for every piece of data missing where it matters", () => {
+    const s = freshStore();
+    const bare: Ticket = {
+      ...blankTicket(), id: 900, name: "bare", summary: "", projects: [], stakeholders: [],
+      dueDate: null, state: "New",
+    };
+    const alerts = auditTicket(bare, s.settings, NOW);
+    const kinds = alerts.map((a) => a.kind);
+    expect(kinds).toContain("NO-SUMMARY");
+    expect(kinds).toContain("NO-PROJECTS");
+    expect(kinds).toContain("NO-STAKEHOLDERS");
+    expect(alerts.every((a) => a.why.length > 0)).toBe(true);   // each says why it matters
+  });
+
+  it("raises no gap for a ticket that is filled in", () => {
+    const s = freshStore();
+    const good: Ticket = {
+      ...blankTicket(), id: 901, name: "good", summary: "why it exists", projects: ["Atlas"],
+      stakeholders: ["Dana R."], state: "In Progress", dueDate: isoFromNow(60), type: "Should",
+      estimate: 1, lastTouched: isoFromNow(0),
+    };
+    expect(auditTicket(good, s.settings, NOW).filter((a) => a.severity === "gap")).toEqual([]);
+  });
+
+  it("notices committed work with no date to be late against", () => {
+    const s = freshStore();
+    const t: Ticket = {
+      ...blankTicket(), id: 902, name: "committed", summary: "x", projects: ["Atlas"],
+      stakeholders: ["Dana R."], state: "Committed", dueDate: null, estimate: 1,
+    };
+    expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("COMMITTED-NO-DUE");
+  });
+
+  it("catches work left behind in a release that already shipped", () => {
+    const s = freshStore();
+    const t: Ticket = {
+      ...blankTicket(), id: 903, name: "stranded", summary: "x", projects: ["Atlas"],
+      stakeholders: ["Dana R."], state: "In Progress", sprint: "v0.21", estimate: 1,
+      lastTouched: isoFromNow(0),
+    };
+    expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("SHIPPED-RELEASE");
+  });
+
+  it("catches a due date that has already passed", () => {
+    const s = freshStore();
+    const t: Ticket = {
+      ...blankTicket(), id: 904, name: "late", summary: "x", projects: ["Atlas"],
+      stakeholders: ["Dana R."], state: "In Progress", dueDate: isoFromNow(-5), estimate: 1,
+      lastTouched: isoFromNow(0),
+    };
+    expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("PAST-DUE");
+  });
+
+  it("leaves a closed ticket alone apart from its gaps", () => {
+    const s = freshStore();
+    const t: Ticket = {
+      ...blankTicket(), id: 905, name: "done", summary: "x", projects: ["Atlas"],
+      stakeholders: ["Dana R."], state: "Done", dueDate: isoFromNow(-30), estimate: 1,
+      lastTouched: isoFromNow(-30),
+    };
+    expect(auditTicket(t, s.settings, NOW)).toEqual([]);        // nothing can slip once closed
+  });
+
+  it("sweeps open tickets by default and can include closed", () => {
+    const s = freshStore();
+    const open = audit(s.tickets, s.settings, {}, NOW);
+    const all = audit(s.tickets, s.settings, { includeClosed: true }, NOW);
+    expect(open.tickets).toBeGreaterThan(0);
+    expect(all.tickets).toBeGreaterThanOrEqual(open.tickets);
+    expect(open.rows.every((r) => r.ticket.state !== "Done" && r.ticket.state !== "Won't Do")).toBe(true);
+  });
+
+  it("puts the worst tickets first, so fixing from the top shortens the list", () => {
+    const s = freshStore();
+    const r = audit(s.tickets, s.settings, {}, NOW);
+    expect(r.withAlerts).toBeGreaterThan(0);
+    for (let i = 1; i < r.rows.length; i++) {
+      expect(r.rows[i - 1].alerts.length).toBeGreaterThanOrEqual(r.rows[i].alerts.length);
+    }
+    expect(r.alerts).toBe(r.gaps + r.risks);
   });
 });
 

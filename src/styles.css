@@ -198,6 +198,15 @@ tr.clickable { cursor: pointer; }
 }
 .flabel { color: var(--dim); font-size: 12px; margin-bottom: 6px; }
 .proj-filter { margin-top: 8px; }
+.review-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.review-head .spacer { flex: 1; }
+.review-row { display: flex; align-items: baseline; gap: 10px; }
+.review-row .spacer { flex: 1; }
+.review-sum { margin: 12px 0 0; }
+ul.alerts { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 8px; }
+ul.alerts li { display: flex; align-items: baseline; gap: 10px; }
+.review-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.review-controls .spacer { flex: 1; }
 .stamped { border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 6px; }
 .tier {
   border: 1px solid var(--line); border-radius: 10px;

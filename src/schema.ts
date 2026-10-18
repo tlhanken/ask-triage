@@ -249,6 +249,115 @@ export function computeFlags(t: Ticket, s: Settings, now = new Date()): Flag[] {
   return out;
 }
 
+/** What an audit looks for: data missing where it matters, and work going wrong. */
+export type AlertSeverity = "gap" | "risk";
+
+export interface Alert {
+  kind: string;
+  severity: AlertSeverity;
+  what: string;
+  /** Why it matters. An alert with no stated consequence is noise. */
+  why: string;
+}
+
+/** The consequence of each contradiction flag, for the sweep to show. */
+const FLAG_WHY: Record<Flag, { what: string; why: (s: Settings) => string }> = {
+  UNPLANNED: { what: "Unplanned", why: () => "Marked critical, but committed to no release." },
+  "DATE-RISK": { what: "Date risk", why: (s) => `Due within ${s.weights.dueRiskDays} days and not started.` },
+  SLIPPED: { what: "Slipped", why: (s) => `Carried over ${s.weights.slippageThreshold} times already.` },
+  STALE: { what: "Stale", why: (s) => `Untouched for over ${s.weights.staleDays} days.` },
+  "NO-DATE-OLD": { what: "Old, no date", why: (s) => `Open over ${s.weights.noDateOldDays} days with no due date, so nothing can measure it.` },
+};
+
+/**
+ * Everything a sweep should raise on one ticket.
+ *
+ * Two families. GAPS are data missing where its absence has a consequence — the
+ * optional tier means these are never REQUIRED to save, but that is not the same
+ * as being fine to leave out. RISKS are work going wrong quietly: past its date,
+ * left behind in a shipped release, too large to finish in time, or carrying one
+ * of the contradiction flags.
+ */
+export function auditTicket(t: Ticket, s: Settings, now = new Date()): Alert[] {
+  const out: Alert[] = [];
+  const live = isOpen(t);
+
+  if (!t.summary.trim()) {
+    out.push({ kind: "NO-SUMMARY", severity: "gap", what: "No summary",
+      why: "Nothing records what this is or why it exists." });
+  }
+  if (t.projects.length === 0) {
+    out.push({ kind: "NO-PROJECTS", severity: "gap", what: "No project",
+      why: "It appears in no project update, so nobody but you will ever see it." });
+  }
+  if (t.stakeholders.length === 0) {
+    out.push({ kind: "NO-STAKEHOLDERS", severity: "gap", what: "Nobody waiting",
+      why: "No stakeholder attached — worth checking this is still a real ask." });
+  }
+  if (live && (t.state === "Committed" || t.state === "In Progress") && !t.dueDate) {
+    out.push({ kind: "COMMITTED-NO-DUE", severity: "gap", what: "Committed, no date",
+      why: "Committed work with no due date cannot be late, so nothing will ever notice it slipping." });
+  }
+
+  if (!live) return out;                        // a closed ticket cannot slip
+
+  const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
+  if (toDue !== null && toDue < 0) {
+    out.push({ kind: "PAST-DUE", severity: "risk", what: "Past due",
+      why: `Its due date passed ${-toDue} day${-toDue === 1 ? "" : "s"} ago and it is still open.` });
+  }
+
+  const sp = findSprint(s, t.sprint);
+  if (sp && hasShipped(sp, now)) {
+    out.push({ kind: "SHIPPED-RELEASE", severity: "risk", what: "Left behind",
+      why: `${sp.name} shipped ${daysSince(sp.release, now)} days ago and this is still open.` });
+  }
+
+  if (derive(t, s, now).overEstimate) {
+    out.push({ kind: "WONT-FIT", severity: "risk", what: "Will not fit",
+      why: `${estimateLabel(t.estimate)} of work cannot finish before its due date.` });
+  }
+
+  for (const f of computeFlags(t, s, now)) {
+    out.push({ kind: f, severity: "risk", what: FLAG_WHY[f].what, why: FLAG_WHY[f].why(s) });
+  }
+  return out;
+}
+
+export interface AuditRow { ticket: Ticket; alerts: Alert[]; }
+
+export interface AuditResult {
+  /** Every ticket in scope, worst first. */
+  rows: AuditRow[];
+  tickets: number;
+  withAlerts: number;
+  alerts: number;
+  gaps: number;
+  risks: number;
+}
+
+/** Sweep the register. Worst first, so fixing from the top shrinks the list. */
+export function audit(
+  tickets: Ticket[], s: Settings, opts: { includeClosed?: boolean } = {}, now = new Date(),
+): AuditResult {
+  const rows: AuditRow[] = tickets
+    .filter((t) => opts.includeClosed || isOpen(t))
+    .map((t) => ({ ticket: t, alerts: auditTicket(t, s, now) }))
+    .sort((a, b) =>
+      b.alerts.length - a.alerts.length
+      || scoreTicket(b.ticket, s, now) - scoreTicket(a.ticket, s, now));
+
+  const all = rows.flatMap((r) => r.alerts);
+  return {
+    rows,
+    tickets: rows.length,
+    withAlerts: rows.filter((r) => r.alerts.length > 0).length,
+    alerts: all.length,
+    gaps: all.filter((a) => a.severity === "gap").length,
+    risks: all.filter((a) => a.severity === "risk").length,
+  };
+}
+
 /** Draft priority score. A proposal the human overrides, never the verdict. */
 export function scoreTicket(t: Ticket, s: Settings, now = new Date()): number {
   const w = s.weights;

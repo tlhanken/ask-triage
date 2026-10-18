@@ -16,8 +16,9 @@ import DecisionLog from "./Decisions";
 import History from "./History";
 import TicketForm from "./TicketForm";
 import SprintForm from "./SprintForm";
+import Review from "./Review";
 
-type Tab = "triage" | "sprints" | "projects" | "register" | "decisions" | "history";
+type Tab = "triage" | "review" | "sprints" | "projects" | "register" | "decisions" | "history";
 
 export default function App() {
   const [store, setStore] = useState<Store>(() => load());
@@ -98,6 +99,7 @@ export default function App() {
         <h1>Revel priority tracker</h1>
         <nav className="tabs">
           <button className={tab === "triage" ? "on" : ""} onClick={() => setTab("triage")}>Triage</button>
+          <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Review</button>
           <button className={tab === "sprints" ? "on" : ""} onClick={() => setTab("sprints")}>Sprints</button>
           <button className={tab === "projects" ? "on" : ""} onClick={() => setTab("projects")}>Projects</button>
           <button className={tab === "register" ? "on" : ""} onClick={() => setTab("register")}>Register</button>
@@ -114,6 +116,7 @@ export default function App() {
 
       <main>
         {tab === "triage" && <Triage store={store} onDecide={decide} onUndo={() => act("undo decision", undoLast)} />}
+        {tab === "review" && <Review store={store} onEdit={(t) => setEditing({ ticket: t })} />}
         {tab === "sprints" && (
           <Sprints
             store={store}
