@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
-import { derive, revisitInWeeks } from "./schema";
+import { derive, PROJECTS, revisitInWeeks } from "./schema";
 import { freshStore, undecided } from "./store";
 
 afterEach(() => {
@@ -126,6 +126,66 @@ describe("review sweep", () => {
   });
 });
 
+describe("project picker", () => {
+  const openNewTicket = () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /New ticket/ }));
+    return screen.getByRole("combobox", { name: "Relevant projects" });
+  };
+
+  /** Scoped to the picker: a <select> also exposes role "option" for its entries. */
+  const pickerOption = () => within(screen.getByRole("listbox")).getAllByRole("option");
+
+  it("offers a dropdown only when asked, and no chips for what is not chosen", () => {
+    const input = openNewTicket();
+    expect(screen.queryByRole("listbox")).toBeNull();          // closed until asked for
+    fireEvent.focus(input);
+    expect(pickerOption().length).toBe(PROJECTS.length);
+  });
+
+  it("filters as you type and attaches the one you pick", () => {
+    const input = openNewTicket();
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "cind" } });
+    expect(pickerOption().map((o) => o.textContent)).toEqual(["Cinder"]);
+
+    fireEvent.click(pickerOption()[0]);
+    expect(screen.getByRole("button", { name: /Cinder ✕/ })).toBeTruthy();   // now a chip
+    expect(screen.queryByRole("listbox")).toBeNull();                       // and closed again
+  });
+
+  it("drops an attached project from the offers", () => {
+    const input = openNewTicket();
+    fireEvent.focus(input);
+    fireEvent.click(pickerOption()[0]);                        // Atlas
+    fireEvent.focus(input);
+    expect(pickerOption().map((o) => o.textContent)).not.toContain("Atlas");
+  });
+
+  it("picks with the keyboard", () => {
+    const input = openNewTicket();
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: "ArrowDown" });           // first offer, Atlas
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("button", { name: /Atlas ✕/ })).toBeTruthy();
+  });
+
+  it("removes an attached project when its chip is clicked", () => {
+    const input = openNewTicket();
+    fireEvent.focus(input);
+    fireEvent.click(pickerOption()[0]);
+    fireEvent.click(screen.getByRole("button", { name: /Atlas ✕/ }));
+    expect(screen.queryByRole("button", { name: /Atlas ✕/ })).toBeNull();
+  });
+
+  it("says the list is fixed when nothing matches", () => {
+    const input = openNewTicket();
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "zzz" } });
+    expect(screen.getByText(/No project matches/)).toBeTruthy();
+  });
+});
+
 describe("project view", () => {
   it("lists the tickets for a project", () => {
     render(<App />);
@@ -149,7 +209,10 @@ describe("editing in the browser", () => {
     fireEvent.click(screen.getByRole("button", { name: /new ticket/i }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Audit the audit log" } });
     fireEvent.change(screen.getByLabelText("Summary"), { target: { value: "because compliance" } });
-    fireEvent.click(screen.getByRole("button", { name: "Cinder" }));
+    const picker = screen.getByRole("combobox", { name: "Relevant projects" });
+    fireEvent.focus(picker);
+    fireEvent.change(picker, { target: { value: "cind" } });
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option"));
     fireEvent.click(screen.getByRole("button", { name: /save ticket/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Register$/ }));
     expect(screen.getAllByText(/Audit the audit log/).length).toBeGreaterThan(0);

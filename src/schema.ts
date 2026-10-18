@@ -14,6 +14,51 @@
 export const PROJECTS = ["Atlas", "Borealis", "Cinder", "Delta", "Platform"] as const;
 export type ProjectId = (typeof PROJECTS)[number];
 
+/**
+ * How many suggestions a picker renders at once.
+ *
+ * Rendering every match is what breaks a picker at a few hundred projects: the
+ * list stops being scannable long before it stops being fast. The count of what
+ * was left out is shown, so the cap narrows without hiding anything.
+ */
+export const PROJECT_SUGGESTION_CAP = 50;
+
+export interface ProjectMatches<T extends string = string> {
+  /** The suggestions to render, capped. */
+  shown: T[];
+  /** How many matched before the cap. */
+  total: number;
+  /** How many are in the list and not already chosen. */
+  available: number;
+}
+
+/**
+ * Filter a controlled list for a picker.
+ *
+ * Prefix matches rank above substring ones, because with a few hundred projects
+ * typing "plat" must offer "Platform" before "WebPlatform". Ties keep the list's
+ * own order, so the author's arrangement shows through.
+ */
+export function matchProjects<T extends string>(
+  query: string,
+  selected: readonly T[],
+  all: readonly T[],
+  cap = PROJECT_SUGGESTION_CAP,
+): ProjectMatches<T> {
+  const pool = all.filter((p) => !selected.includes(p));
+  const q = query.trim().toLowerCase();
+  if (!q) return { shown: pool.slice(0, cap), total: pool.length, available: pool.length };
+
+  const order = new Map(all.map((p, i) => [p, i] as const));
+  const matched = pool
+    .filter((p) => p.toLowerCase().includes(q))
+    .sort((a, b) =>
+      Number(!a.toLowerCase().startsWith(q)) - Number(!b.toLowerCase().startsWith(q))
+      || (order.get(a) ?? 0) - (order.get(b) ?? 0));
+
+  return { shown: matched.slice(0, cap), total: matched.length, available: pool.length };
+}
+
 export const TICKET_TYPES = ["Critical", "Should", "Nice-to-have"] as const;
 export type TicketType = (typeof TICKET_TYPES)[number];
 

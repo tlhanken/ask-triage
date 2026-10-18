@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { type ProjectId, type Ticket, PROJECTS, STATES, derive, isOpen } from "./schema";
 import type { Store } from "./store";
 
@@ -17,10 +17,25 @@ export default function Projects({ store, onEdit }: Props) {
   const shown = (showClosed ? all : all.filter(isOpen))
     .sort((a, b) => derive(b, store.settings).score - derive(a, store.settings).score);
 
-  const counts = PROJECTS.map((p) => {
-    const ts = store.tickets.filter((t) => t.projects.includes(p));
-    return { p, open: ts.filter(isOpen).length, total: ts.length, critical: ts.filter((t) => t.type === "Critical" && isOpen(t)).length };
-  });
+  // One pass over the tickets, not one pass per project. At a few hundred
+  // projects the per-project scan is hundreds of full scans on every render.
+  const counts = useMemo(() => {
+    const tally = new Map<string, { open: number; total: number; critical: number }>(
+      PROJECTS.map((p) => [p, { open: 0, total: 0, critical: 0 }]),
+    );
+    for (const t of store.tickets) {
+      const live = isOpen(t);
+      const critical = live && t.type === "Critical";
+      for (const p of t.projects) {
+        const c = tally.get(p);
+        if (!c) continue;                     // a project no longer on the list
+        c.total += 1;
+        if (live) c.open += 1;
+        if (critical) c.critical += 1;
+      }
+    }
+    return PROJECTS.map((p) => ({ p, ...tally.get(p)! }));
+  }, [store.tickets]);
 
   const grouped = STATES
     .map((state) => ({ state, tickets: shown.filter((t) => t.state === state) }))

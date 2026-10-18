@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  type ProjectId, type Ticket, ESTIMATES, estimateLabel, PROJECTS, TICKET_TYPES,
+  type ProjectId, type Ticket, ESTIMATES, estimateLabel, PROJECTS, TICKET_TYPES, matchProjects,
 } from "./schema";
 
 /**
@@ -30,19 +30,43 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
     setD((cur) => ({ ...cur, [k]: v }));
 
   // Projects come from a fixed list, so the input FILTERS the list rather than
-  // inventing entries: type to narrow, click to attach.
+  // inventing entries: type to narrow, pick from the dropdown. The list is
+  // capped and scrolls, and it is the only place suggestions render — chips are
+  // for what is already attached.
   const [projectQuery, setProjectQuery] = useState("");
-  const matches = PROJECTS.filter(
-    (p) => !d.projects.includes(p) && p.toLowerCase().includes(projectQuery.trim().toLowerCase()),
-  );
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);          // -1: nothing picked yet
+  const comboRef = useRef<HTMLDivElement>(null);
+
+  const { shown, total, available } = matchProjects(projectQuery, d.projects, PROJECTS);
+  const capped = total > shown.length;
+  const at = Math.min(highlight, shown.length - 1);
+
+  useEffect(() => {
+    if (!projectsOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (comboRef.current && !comboRef.current.contains(e.target as Node)) setProjectsOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [projectsOpen]);
 
   const addProject = (p: ProjectId) => {
     setD((cur) => (cur.projects.includes(p) ? cur : { ...cur, projects: [...cur.projects, p] }));
     setProjectQuery("");
+    setHighlight(-1);
+    setProjectsOpen(false);
   };
 
   const removeProject = (p: ProjectId) =>
     setD((cur) => ({ ...cur, projects: cur.projects.filter((x) => x !== p) }));
+
+  const projectKeys = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setProjectsOpen(true); setHighlight(Math.min(at + 1, shown.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight(Math.max(at - 1, 0)); }
+    else if (e.key === "Enter") { if (projectsOpen && shown[at]) { e.preventDefault(); addProject(shown[at]); } }
+    else if (e.key === "Escape") { if (projectsOpen) { e.preventDefault(); setProjectsOpen(false); } else setProjectQuery(""); }
+  };
 
   const submit = () => {
     const draft: Omit<Ticket, "id"> = {
@@ -87,24 +111,43 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
                 ))}
               </div>
             )}
-            <input className="proj-filter" value={projectQuery}
-                   onChange={(e) => setProjectQuery(e.target.value)}
-                   onKeyDown={(e) => {
-                     if (e.key === "Enter" && matches.length > 0) { e.preventDefault(); addProject(matches[0]); }
-                     if (e.key === "Escape") setProjectQuery("");
-                   }}
-                   placeholder={d.projects.length ? "Type to add another project…" : "Type to filter projects…"} />
-            <div className="chips">
-              {matches.map((p) => (
-                <button key={p} type="button" className="chip"
-                        onClick={() => addProject(p)}>{p}</button>
-              ))}
+
+            <div className="combo" ref={comboRef}>
+              <input className="proj-filter" value={projectQuery}
+                     role="combobox" aria-label="Relevant projects"
+                     aria-expanded={projectsOpen} aria-controls="project-options"
+                     aria-autocomplete="list" autoComplete="off"
+                     onChange={(e) => { setProjectQuery(e.target.value); setProjectsOpen(true); setHighlight(-1); }}
+                     onFocus={() => setProjectsOpen(true)}
+                     onKeyDown={projectKeys}
+                     placeholder={d.projects.length ? "Search projects to add…" : "Search projects…"} />
+
+              {projectsOpen && (
+                <ul className="combo-list" id="project-options" role="listbox">
+                  {shown.map((p, i) => (
+                    <li key={p} role="option" aria-selected={i === at}
+                        className={i === at ? "on" : undefined}
+                        onMouseEnter={() => setHighlight(i)}
+                        onClick={() => addProject(p)}>
+                      {p}
+                    </li>
+                  ))}
+                  {shown.length === 0 && <li className="dim">no match</li>}
+                </ul>
+              )}
             </div>
-            {matches.length === 0 && (
-              <div className="dim small">
+
+            {total === 0 ? (
+              <div className="small dim">
                 {projectQuery.trim()
                   ? `No project matches “${projectQuery.trim()}” — the list is fixed`
                   : "Every project already attached"}
+              </div>
+            ) : (
+              <div className="small dim">
+                {capped
+                  ? `showing ${shown.length} of ${total} matches — keep typing to narrow`
+                  : `${total} project${total === 1 ? "" : "s"}${projectQuery.trim() ? "" : ` of ${available} available`}`}
               </div>
             )}
           </div>

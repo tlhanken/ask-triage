@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
   audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped,
-  inSprint, isFrozen, loadUnits, parseDate, queueHealth, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY,
-  revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
+  inSprint, isFrozen, loadUnits, matchProjects, PROJECT_SUGGESTION_CAP, PROJECTS, parseDate, queueHealth,
+  REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
 } from "./schema";
 import {
   HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit, deleteTicket,
@@ -409,6 +409,44 @@ describe("deferred work comes back", () => {
     s = recordDecision(s, id, "Defer", "again", "2026-11-23", new Date(2026, 9, 26));
     expect(revisitFor(s, id)).toBe("2026-11-23");
     expect(revisitDue(s, new Date(2026, 10, 2))).toEqual([]);   // pushed out, so not due
+  });
+});
+
+describe("project picker", () => {
+  const many = Array.from({ length: 500 }, (_, i) => `Project ${String(i).padStart(3, "0")}`);
+
+  it("caps what it renders, and counts what it left out", () => {
+    const m = matchProjects("", [], many);
+    expect(m.shown).toHaveLength(PROJECT_SUGGESTION_CAP);
+    expect(m.total).toBe(500);
+    expect(m.available).toBe(500);
+  });
+
+  it("stays capped however many match", () => {
+    const m = matchProjects("project", [], many);
+    expect(m.shown).toHaveLength(PROJECT_SUGGESTION_CAP);
+    expect(m.total).toBe(500);
+  });
+
+  it("narrows by substring", () => {
+    const m = matchProjects("Project 01", [], many);
+    expect(m.total).toBe(10);                                  // 010 through 019
+    expect(m.shown).toHaveLength(10);
+  });
+
+  it("puts prefix matches first, so a short query finds the obvious one", () => {
+    const list = ["WebPlatform", "Platform", "Platform Tools"];
+    expect(matchProjects("plat", [], list).shown).toEqual(["Platform", "Platform Tools", "WebPlatform"]);
+  });
+
+  it("never offers what is already attached", () => {
+    const m = matchProjects("", ["Atlas"], PROJECTS);
+    expect(m.shown).not.toContain("Atlas");
+    expect(m.available).toBe(PROJECTS.length - 1);
+  });
+
+  it("honours a custom cap", () => {
+    expect(matchProjects("", [], many, 5).shown).toHaveLength(5);
   });
 });
 
