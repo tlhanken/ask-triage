@@ -79,7 +79,7 @@ release first, and SHALL be changeable by the owner.
 - THEN the columns read backlog, `v0.25`, `v0.24`, `v0.23`, `v0.22`, `v0.21`
 - AND the newest release is leftmost
 
-#### Scenario: Reordering a release
+#### Scenario: Reordering a sprint
 
 - WHEN a release is moved one place left
 - THEN it swaps with its left neighbour
@@ -90,20 +90,20 @@ release first, and SHALL be changeable by the owner.
 - WHEN the leftmost release is moved left, or the rightmost is moved right
 - THEN the order is unchanged
 
-#### Scenario: Adding a release
+#### Scenario: Adding a sprint
 
 - WHEN a release newer than every existing one is added
 - THEN it is placed leftmost
 - AND WHEN a release older than every existing one is added, it is placed rightmost
 - AND the relative order of the existing releases is left alone
 
-#### Scenario: One column per release
+#### Scenario: One column per sprint
 
 - WHEN the board is shown
 - THEN there is a backlog column plus one column per release
 - AND a ticket appears in the column of the release it is assigned to
 
-#### Scenario: Unscheduling on release removal
+#### Scenario: Unscheduling on sprint removal
 
 - WHEN a release column is removed
 - THEN its tickets become unscheduled
