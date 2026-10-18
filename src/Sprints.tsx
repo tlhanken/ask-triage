@@ -3,7 +3,7 @@ import {
   type Ticket, backlog, daysSince, daysToRelease, derive, findSprint, hasShipped, inSprint,
   isFrozen, isOpen,
 } from "./schema";
-import { type Move, type Store, optimizePlan, slippedIn } from "./store";
+import { type Move, type OptimizeResult, type Store, explainPlan, optimizePlan, slippedIn } from "./store";
 
 /** Release board: backlog on the left, then releases newest-first.
  *  Cards drag between columns; the stored order is the display order. */
@@ -17,15 +17,18 @@ interface Props {
   onShiftSprint: (name: string, delta: -1 | 1) => void;
   onApplyPlan: (moves: Move[]) => void;
   onEditSprint: (name: string) => void;
+  onFillDates: () => void;
 }
 
 export default function Sprints({
   store, onEdit, onMove, onAddSprint, onRemoveSprint, onShiftSprint, onApplyPlan, onEditSprint,
+  onFillDates,
 }: Props) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  const [plan, setPlan] = useState<Move[] | null>(null);
+  const [plan, setPlan] = useState<OptimizeResult | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const why = plan ? explainPlan(plan) : "";
 
   const open = store.tickets.filter(isOpen);
   const backlogTickets = backlog(store.tickets);
@@ -94,23 +97,19 @@ export default function Sprints({
           <div className="plan-head">
             <b>Proposed releases</b>
             <span className="dim small">
-              {plan.length} move{plan.length === 1 ? "" : "s"} · nothing moves until you apply ·
-              skips frozen releases and work already scheduled
+              {plan.moves.length} move{plan.moves.length === 1 ? "" : "s"} · nothing moves until you
+              apply · skips frozen and shipped releases, and work already scheduled
             </span>
             <div className="spacer" />
-            {plan.length > 0 && (
-              <button className="pick" onClick={() => { onApplyPlan(plan); setPlan(null); }}>Apply</button>
+            {plan.moves.length > 0 && (
+              <button className="pick" onClick={() => { onApplyPlan(plan.moves); setPlan(null); }}>Apply</button>
             )}
             <button onClick={() => setPlan(null)}>Discard</button>
           </div>
-          {plan.length === 0 ? (
-            <div className="dim small" style={{ padding: "8px 0" }}>
-              Nothing to place — everything open is already scheduled, or the eligible releases are
-              full, frozen, or have no release date set.
-            </div>
-          ) : (
+
+          {plan.moves.length > 0 ? (
             <ul className="plan-list">
-              {plan.map((m) => (
+              {plan.moves.map((m) => (
                 <li key={m.id}>
                   <b>{m.label}</b> {m.name} → <b>{m.to}</b>{" "}
                   <span className="dim small">{m.reason}</span>
@@ -118,6 +117,25 @@ export default function Sprints({
                 </li>
               ))}
             </ul>
+          ) : (
+            <div className="dim small" style={{ padding: "8px 0" }}>{why}</div>
+          )}
+
+          {plan.moves.length > 0 && why && (
+            <div className="dim small" style={{ paddingTop: 8 }}>{why}</div>
+          )}
+
+          {plan.undated.length > 0 && (
+            <div className="plan-head" style={{ marginTop: 10 }}>
+              <span className="dim small">
+                {plan.undated.join(", ")} {plan.undated.length === 1 ? "has" : "have"} no release date,
+                so {"it"} cannot be checked against a due date.
+              </span>
+              <div className="spacer" />
+              <button onClick={() => { onFillDates(); setPlan(null); }}>
+                Give them a two-week cadence
+              </button>
+            </div>
           )}
         </div>
       )}

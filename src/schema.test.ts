@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog, computeFlags,
-  derive, externalLabel, findSprint, forProject, inSprint, isFrozen, parseDate, queueHealth, scoreTicket,
-  sprintNames,
+  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
+  computeFlags, derive, externalLabel, findSprint, forProject, hasShipped, inSprint, isFrozen, parseDate,
+  queueHealth, scoreTicket, sprintNames,
 } from "./schema";
 import {
-  HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, freshStore,
-  moveTicketToSprint, optimizePlan, recordDecision, removeSprint, revertTo, shiftSprint, slippedIn, stats,
-  acceptedThisSprint, undecided, undoLast, updateSprint, updateTicket, withHistory,
+  HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, explainPlan,
+  fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, recordDecision, removeSprint, revertTo,
+  shiftSprint, slippedIn, stats, acceptedThisSprint, undecided, undoLast, updateSprint, updateTicket,
+  withHistory,
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
 
@@ -333,7 +334,7 @@ describe("history and revert", () => {
 describe("auto-optimize", () => {
   it("only proposes for open tickets that have no release", () => {
     const s = moveTicketToSprint(freshStore(), 1, "v0.24", NOW);
-    const plan = optimizePlan(s, NOW);
+    const plan = optimizePlan(s, NOW).moves;
     expect(plan.map((m) => m.id)).not.toContain(1);
     for (const m of plan) {
       expect(s.tickets.find((t) => t.id === m.id)!.sprint).toBeNull();
@@ -341,7 +342,7 @@ describe("auto-optimize", () => {
   });
 
   it("never proposes a release that has already shipped", () => {
-    const plan = optimizePlan(freshStore(), NOW);
+    const plan = optimizePlan(freshStore(), NOW).moves;
     expect(plan.length).toBeGreaterThan(0);
     for (const m of plan) expect(["v0.23", "v0.24", "v0.25"]).toContain(m.to);
   });
@@ -349,13 +350,13 @@ describe("auto-optimize", () => {
   it("respects capacity per release", () => {
     const s = freshStore();
     const per = new Map<string, number>();
-    for (const m of optimizePlan(s, NOW)) per.set(m.to, (per.get(m.to) ?? 0) + 1);
+    for (const m of optimizePlan(s, NOW).moves) per.set(m.to, (per.get(m.to) ?? 0) + 1);
     for (const [, n] of per) expect(n).toBeLessThanOrEqual(s.settings.commitTargetPerSprint);
   });
 
   it("places dated work before undated work", () => {
     const s = freshStore();
-    const plan = optimizePlan(s, NOW);
+    const plan = optimizePlan(s, NOW).moves;
     const dated = plan.map((m) => Boolean(s.tickets.find((t) => t.id === m.id)!.dueDate));
     const firstUndated = dated.indexOf(false);
     const lastDated = dated.lastIndexOf(true);
@@ -365,7 +366,7 @@ describe("auto-optimize", () => {
 
   it("applying commits the moves and the whole batch is revertible", () => {
     const s = freshStore();
-    const plan = optimizePlan(s, NOW);
+    const plan = optimizePlan(s, NOW).moves;
     const s1 = withHistory(s, "auto-optimize", (cur) => applyPlan(cur, plan, NOW), NOW);
     const moved = s1.tickets.find((t) => t.id === plan[0].id)!;
     expect(moved.sprint).toBe(plan[0].to);
@@ -392,26 +393,88 @@ describe("release dates and feature freeze", () => {
   it("auto-optimize skips frozen releases", () => {
     let s = freshStore();
     s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
-    const plan = optimizePlan(s, NOW);
-    expect(plan.map((m) => m.to)).not.toContain("v0.23");
-    expect(plan.length).toBeGreaterThan(0);
+    const r = optimizePlan(s, NOW);
+    expect(r.moves.map((m) => m.to)).not.toContain("v0.23");
+    expect(r.moves.length).toBeGreaterThan(0);
   });
 
   it("auto-optimize prefers a release that ships on or before the due date", () => {
     let s = freshStore();
     s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
     s = updateSprint(s, "v0.24", { freeze: "2020-01-01" });
-    const plan = optimizePlan(s, NOW);
-    expect(plan.length).toBeGreaterThan(0);
-    expect(plan.every((m) => m.to === "v0.25")).toBe(true);
+    const r = optimizePlan(s, NOW);
+    expect(r.moves.length).toBeGreaterThan(0);
+    expect(r.moves.every((m) => m.to === "v0.25")).toBe(true);
     // the dated ones cannot be shipped in time, and the proposal says so
-    expect(plan.some((m) => m.warning)).toBe(true);
+    expect(r.moves.some((m) => m.warning)).toBe(true);
   });
 
   it("proposes nothing when every eligible release is frozen", () => {
     let s = freshStore();
     for (const sp of s.settings.sprints) s = updateSprint(s, sp.name, { freeze: "2020-01-01" });
-    expect(optimizePlan(s, NOW)).toEqual([]);
+    expect(optimizePlan(s, NOW).moves).toEqual([]);
+  });
+
+  it("still proposes when releases have no dates, and flags the uncertainty", () => {
+    const s = freshStore();
+    const undated: Sprint[] = s.settings.sprints.map((sp) => ({ ...sp, freeze: null, release: null }));
+    const r = optimizePlan({ ...s, settings: { ...s.settings, sprints: undated } }, NOW);
+    expect(r.moves.length).toBeGreaterThan(0);
+    expect(r.undated).toHaveLength(undated.length);
+    expect(r.moves.some((m) => m.warning === "this release has no date")).toBe(true);
+    expect(explainPlan(r)).toMatch(/no release date/);
+  });
+
+  it("explains an empty proposal rather than returning nothing", () => {
+    const s = freshStore();
+    const shipped: Sprint[] = s.settings.sprints.map((sp) => ({
+      ...sp, freeze: "2019-12-01", release: "2020-01-01",
+    }));
+    const r = optimizePlan({ ...s, settings: { ...s.settings, sprints: shipped } }, NOW);
+    expect(r.moves).toEqual([]);
+    expect(explainPlan(r)).toMatch(/Nothing to place/);
+    expect(explainPlan(r)).toMatch(/already shipped/);
+  });
+
+  it("explains when everything is already scheduled", () => {
+    const s = freshStore();
+    const tickets = s.tickets.map((t, i) => ({ ...t, sprint: i % 2 ? "v0.23" : "v0.24" }));
+    const r = optimizePlan({ ...s, tickets }, NOW);
+    expect(r.moves).toEqual([]);
+    expect(r.candidates).toBe(0);
+    expect(explainPlan(r)).toMatch(/no open ticket is unscheduled/);
+  });
+
+  it("can fill in missing release dates on a cadence, oldest version first", () => {
+    const s = freshStore();
+    const undated = { ...s, settings: {
+      ...s.settings,
+      sprints: s.settings.sprints.map((sp) => ({ ...sp, freeze: null, release: null })),
+    } };
+    const filled = fillReleaseDates(undated, NOW);
+    expect(filled.settings.sprints.every((sp) => sp.release && sp.freeze)).toBe(true);
+    const byName = Object.fromEntries(filled.settings.sprints.map((sp) => [sp.name, sp.release!]));
+    expect(byName["v0.21"] < byName["v0.25"]).toBe(true);
+    // A repair must not hand back a release that is already frozen or shipped.
+    expect(filled.settings.sprints.every((sp) => !isFrozen(sp, NOW) && !hasShipped(sp, NOW))).toBe(true);
+    expect(optimizePlan(filled, NOW).moves.length).toBeGreaterThan(0);
+  });
+
+  it("filling dates changes nothing when every release already has them", () => {
+    const s = freshStore();
+    expect(fillReleaseDates(s, NOW)).toEqual(s);
+  });
+
+  it("undated releases fall back to the order the date repair creates", () => {
+    const s = freshStore();
+    const undated = { ...s, settings: {
+      ...s.settings,
+      sprints: s.settings.sprints.map((sp) => ({ ...sp, freeze: null, release: null })),
+    } };
+    // with no dates, the oldest version is treated as next...
+    expect(optimizePlan(undated, NOW).eligible[0]).toBe("v0.21");
+    // ...and repairing the dates must not change which release comes first
+    expect(optimizePlan(fillReleaseDates(undated, NOW), NOW).eligible[0]).toBe("v0.21");
   });
 
   it("records what was placed into a release after its freeze", () => {

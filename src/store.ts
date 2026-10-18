@@ -7,6 +7,7 @@ import {
   DEFAULT_SETTINGS,
   defaultSprints,
   derive,
+  estimateLabel,
   findSprint,
   hasShipped,
   iso,
@@ -335,26 +336,57 @@ export interface Move {
   warning?: string;
 }
 
+/** A proposal plus everything needed to explain it, including when it is empty. */
+export interface OptimizeResult {
+  moves: Move[];
+  /** Releases that could take work, in the order they were considered. */
+  eligible: string[];
+  /** Eligible, but already at capacity. */
+  full: string[];
+  /** Releases with no release date: usable, but not checkable against a due date. */
+  undated: string[];
+  /** Releases left out, and why. */
+  skipped: { name: string; reason: "shipped" | "frozen" }[];
+  /** Open, unscheduled tickets that were considered. */
+  candidates: number;
+  /** Candidates that got no release because everything eligible was full. */
+  unplaced: number;
+}
+
 /**
  * Propose release assignments for tickets that have none.
  *
  * Conservative by design: it never moves work that is already scheduled and
- * never unschedules anything, so a manual arrangement survives. It also skips
- * frozen releases — adding scope to a frozen release is a human decision, not
- * an automatic one. The result is a proposal; the caller applies it, and
- * history makes it one click to undo.
+ * never unschedules anything, so a manual arrangement survives. It skips frozen
+ * and shipped releases, because adding scope to those is a human decision.
+ *
+ * A release with no date is still usable — it just cannot be checked against a
+ * due date, so it sorts last and any dated ticket landing there is flagged.
+ * Returning an empty proposal always comes with a reason, since a button that
+ * does nothing must say why.
  */
-export function optimizePlan(s: Store, now = new Date()): Move[] {
+export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
   const target = s.settings.commitTargetPerSprint;
-  // Releases still to come, by release date. No date yet means it cannot be
-  // reasoned about, so it is left out.
-  const upcoming = s.settings.sprints
-    .filter((sp) => sp.release !== null && !hasShipped(sp, now) && !isFrozen(sp, now))
-    .sort((a, b) => a.release!.localeCompare(b.release!));
-  if (upcoming.length === 0) return [];
+
+  const skipped: OptimizeResult["skipped"] = [];
+  const usable: Sprint[] = [];
+  for (const sp of s.settings.sprints) {
+    if (hasShipped(sp, now)) skipped.push({ name: sp.name, reason: "shipped" });
+    else if (isFrozen(sp, now)) skipped.push({ name: sp.name, reason: "frozen" });
+    else usable.push(sp);
+  }
+
+  const eligible = [...usable].sort((a, b) => {
+    if (a.release && b.release) return a.release.localeCompare(b.release);
+    if (a.release) return -1;
+    if (b.release) return 1;
+    // Neither has a date: fall back to version order, oldest first — the same
+    // direction the date-repair offer uses, so the two agree about what is next.
+    return compareSprints(a.name, b.name);
+  });
 
   const load = new Map(
-    upcoming.map((sp) => [sp.name, s.tickets.filter((t) => t.sprint === sp.name && isOpen(t)).length]),
+    eligible.map((sp) => [sp.name, s.tickets.filter((t) => t.sprint === sp.name && isOpen(t)).length]),
   );
 
   const candidates = s.tickets
@@ -369,10 +401,12 @@ export function optimizePlan(s: Store, now = new Date()): Move[] {
 
   const moves: Move[] = [];
   for (const t of candidates) {
-    const room = upcoming.filter((sp) => load.get(sp.name)! < target);
-    if (room.length === 0) break;                           // every eligible release is full
+    const room = eligible.filter((sp) => load.get(sp.name)! < target);
+    if (room.length === 0) break;                           // everything eligible is full
     // The release has to ship on or before the due date to be any use.
-    const inTime = t.dueDate ? room.find((sp) => sp.release! <= t.dueDate!) : room[0];
+    const inTime = t.dueDate
+      ? room.find((sp) => sp.release !== null && sp.release <= t.dueDate!)
+      : room[0];
     const sprint = inTime ?? room[0];
     const next = load.get(sprint.name)! + 1;
     load.set(sprint.name, next);
@@ -380,7 +414,15 @@ export function optimizePlan(s: Store, now = new Date()): Move[] {
     const bits: string[] = [];
     if (t.type === "Critical") bits.push("critical");
     if (t.dueDate) bits.push(`due ${t.dueDate}`);
-    if (bits.length === 0) bits.push(`score ${t.score}`);
+    bits.push(estimateLabel(t.estimate));
+
+    const warning = !t.dueDate
+      ? undefined
+      : sprint.release === null
+        ? "this release has no date"
+        : inTime
+          ? undefined
+          : "no release ships before its due date";
 
     moves.push({
       id: t.id,
@@ -388,11 +430,70 @@ export function optimizePlan(s: Store, now = new Date()): Move[] {
       name: t.name,
       from: null,
       to: sprint.name,
-      reason: `${bits.join(", ")} → ships ${sprint.release} (${next}/${target})`,
-      warning: t.dueDate && !inTime ? "no release ships before its due date" : undefined,
+      reason: `${bits.join(", ")} → ${sprint.release ? `ships ${sprint.release}` : "no release date"} (${next}/${target})`,
+      warning,
     });
   }
-  return moves;
+
+  return {
+    moves,
+    eligible: eligible.map((sp) => sp.name),
+    full: eligible.filter((sp) => load.get(sp.name)! >= target).map((sp) => sp.name),
+    undated: eligible.filter((sp) => sp.release === null).map((sp) => sp.name),
+    skipped,
+    candidates: candidates.length,
+    unplaced: candidates.length - moves.length,
+  };
+}
+
+/** A plain-language account of a proposal — never empty when there is nothing. */
+export function explainPlan(r: OptimizeResult): string {
+  const constraints: string[] = [];
+  const frozen = r.skipped.filter((x) => x.reason === "frozen").map((x) => x.name);
+  const shipped = r.skipped.filter((x) => x.reason === "shipped").map((x) => x.name);
+  if (frozen.length) constraints.push(`${frozen.join(", ")} frozen`);
+  if (shipped.length) constraints.push(`${shipped.join(", ")} already shipped`);
+  if (r.undated.length) constraints.push(`${r.undated.join(", ")} have no release date`);
+  if (r.full.length) constraints.push(`${r.full.join(", ")} at capacity`);
+  if (r.candidates === 0) constraints.push("no open ticket is unscheduled");
+  else if (r.unplaced > 0) constraints.push(`${r.unplaced} left unplaced`);
+
+  if (r.moves.length === 0) {
+    return constraints.length ? `Nothing to place — ${constraints.join("; ")}.` : "Nothing to place.";
+  }
+  return constraints.length ? `Limited by — ${constraints.join("; ")}.` : "";
+}
+
+/**
+ * Give releases that have no dates a plain two-week cadence from today, oldest
+ * version first. Repairs the gap left by saves that predate release dates.
+ */
+export function fillReleaseDates(s: Store, now = new Date()): Store {
+  const undated = s.settings.sprints
+    .filter((sp) => sp.release === null)
+    .map((sp) => sp.name)
+    .sort(compareSprints);
+  if (undated.length === 0) return s;
+
+  const DAY = 86_400_000;
+  const span = s.settings.sprintLengthDays * DAY;
+  // Freeze a week before shipping, matching the default plan's lead. The lead
+  // matters: freeze-on-today would hand back a release that is already frozen,
+  // which is exactly the state this action exists to repair.
+  const lead = 7 * DAY;
+  const dates: Record<string, { freeze: string; release: string }> = {};
+  undated.forEach((name, i) => {
+    const release = new Date(now.getTime() + (i + 1) * span);
+    dates[name] = { freeze: iso(new Date(release.getTime() - lead)), release: iso(release) };
+  });
+
+  return {
+    ...s,
+    settings: {
+      ...s.settings,
+      sprints: s.settings.sprints.map((sp) => (dates[sp.name] ? { ...sp, ...dates[sp.name] } : sp)),
+    },
+  };
 }
 
 /** Apply a proposal. */

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addSprint, applyPlan, blankTicket, createTicket, deleteTicket,
-  freshStore, load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save, clear, shiftSprint,
-  stats, undoLast, updateTicket, updateSprint, withHistory,
+  freshStore, fillReleaseDates, load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save,
+  clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
   downloadJson, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
@@ -128,6 +128,7 @@ export default function App() {
             onApplyPlan={(moves: Move[]) =>
               act(`auto-optimize (${moves.length} moves)`, (cur) => applyPlan(cur, moves))}
             onEditSprint={setEditingSprint}
+            onFillDates={() => act("fill in release dates", fillReleaseDates)}
           />
         )}
         {tab === "projects" && <Projects store={store} onEdit={(t) => setEditing({ ticket: t })} />}
