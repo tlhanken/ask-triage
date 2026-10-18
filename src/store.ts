@@ -7,9 +7,12 @@ import {
   DEFAULT_SETTINGS,
   defaultSprints,
   derive,
+  DEFAULT_REVISIT_WEEKS,
   estimateLabel,
   findSprint,
   loadUnits,
+  revisitInWeeks,
+  revisitIsDue,
   hasShipped,
   iso,
   isFrozen,
@@ -167,7 +170,10 @@ export function clear(): void {
   }
 }
 
-export const defaultRevisitDays = 90;
+/** Deferred work returns on the weekly revisit day — see REVISIT_WEEKDAY. */
+export function defaultRevisit(now = new Date()): string {
+  return revisitInWeeks(DEFAULT_REVISIT_WEEKS, now);
+}
 
 /** Only the fields a person decides. Nothing else is asked for. */
 export const blankTicket = (): Omit<Ticket, "id"> => ({
@@ -600,6 +606,39 @@ export function undecided(s: Store): Ticket[] {
   return s.tickets
     .filter((t) => t.state === "New" || t.state === "Accepted-Backlog")
     .sort((a, b) => derive(b, s.settings).score - derive(a, s.settings).score);
+}
+
+/** The revisit date on the most recent defer of a ticket, if it has one. */
+export function revisitFor(s: Store, ticketId: number): string | null {
+  for (let i = s.decisions.length - 1; i >= 0; i--) {
+    const d = s.decisions[i];
+    if (d.ticketId === ticketId && d.action === "Defer") return d.revisit;
+  }
+  return null;
+}
+
+/**
+ * Deferred tickets whose revisit day has arrived, longest-waiting first.
+ *
+ * This is what makes a revisit date mean anything. Without it the date is
+ * written into the decision log and never read again — a field that does
+ * nothing, which is the failure this register exists to avoid.
+ */
+export function revisitDue(s: Store, now = new Date()): { ticket: Ticket; revisit: string }[] {
+  return s.tickets
+    .filter((t) => t.state === "Deferred")
+    .map((t) => ({ ticket: t, revisit: revisitFor(s, t.id) }))
+    .filter((x): x is { ticket: Ticket; revisit: string } => revisitIsDue(x.revisit, now))
+    .sort((a, b) => a.revisit.localeCompare(b.revisit));
+}
+
+/**
+ * The triage queue: work that has come back for revisiting leads, then the
+ * undecided few. Revisits go first because they have waited longest.
+ */
+export function triageQueue(s: Store, skipped: number[] = [], now = new Date()): Ticket[] {
+  const back = revisitDue(s, now).map((x) => x.ticket);
+  return [...back, ...undecided(s)].filter((t) => !skipped.includes(t.id));
 }
 
 export function acceptedThisSprint(s: Store): number {

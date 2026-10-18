@@ -218,6 +218,39 @@ export const hasShipped = (sp: Sprint | undefined, now = new Date()): boolean =>
 export const daysToRelease = (sp: Sprint | undefined, now = new Date()): number | null =>
   sp && sp.release ? -daysSince(sp.release, now)! : null;
 
+/**
+ * Deferred work comes back on ONE day a week, not on a spread of daily dates.
+ *
+ * A day-granular revisit for a register this size produces a trickle that
+ * arrives five mornings a week and gets skimmed. Weekly revisits arrive in a
+ * single batch, on the day the weekly triage already runs, so deferring costs
+ * one decision now and one look later instead of a low-grade daily nag.
+ */
+export const REVISIT_WEEKDAY = 1;                 // Monday
+
+export const REVISIT_WEEK_CHOICES = [1, 2, 4, 8] as const;
+export const DEFAULT_REVISIT_WEEKS = 4;
+
+/** Days from `from` to the next revisit day, strictly after it. */
+export function daysToRevisitDay(from = new Date(), weekday = REVISIT_WEEKDAY): number {
+  const delta = (weekday - from.getDay() + 7) % 7;
+  return delta === 0 ? 7 : delta;                 // today IS the day, so a full week out
+}
+
+/** The revisit day n weeks out. n = 1 is the next one, and every result lands on REVISIT_WEEKDAY. */
+export function revisitInWeeks(n: number, from = new Date(), weekday = REVISIT_WEEKDAY): string {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  d.setDate(d.getDate() + daysToRevisitDay(from, weekday) + (n - 1) * 7);
+  return iso(d);
+}
+
+/** A recorded revisit is due once its day has arrived. */
+export function revisitIsDue(revisit: string | null | undefined, now = new Date()): boolean {
+  if (!revisit) return false;
+  const days = daysSince(revisit, now);
+  return days !== null && days >= 0;
+}
+
 export const isOpen = (t: Ticket): boolean => !CLOSED.includes(t.state);
 
 export const backlog = (ts: Ticket[]): Ticket[] => ts.filter((t) => isOpen(t) && !t.sprint);

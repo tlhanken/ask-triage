@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import App from "./App";
-import { derive } from "./schema";
+import { derive, revisitInWeeks } from "./schema";
 import { freshStore, undecided } from "./store";
 
 afterEach(() => {
@@ -46,15 +46,16 @@ describe("triage loop", () => {
     expect(screen.getByText(/Committed this sprint/).textContent).toContain("1 of 8");
   });
 
-  it("deferring captures a reason and a revisit date", () => {
+  it("deferring captures a reason and a weekly revisit date", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /defer/i }));
     fireEvent.change(screen.getByPlaceholderText(/one line/), { target: { value: "behind SSO work" } });
-    fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: "2027-01-15" } });
+    // revisits are chosen in weeks and always land on the weekly revisit day
+    fireEvent.click(screen.getByRole("button", { name: /^next week/ }));
     fireEvent.click(screen.getByRole("button", { name: /record defer/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Decisions$/ }));
     expect(screen.getAllByText(/behind SSO work/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/revisit 2027-01-15/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(new RegExp(`revisit ${revisitInWeeks(1)}`)).length).toBeGreaterThan(0);
   });
 
   it("undo rolls the last decision back out of the queue", () => {

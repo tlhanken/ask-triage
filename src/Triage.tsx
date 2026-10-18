@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { type DecisionAction, type Ticket, derive, estimateLabel, externalLabel, label } from "./schema";
-import { type Store, defaultRevisitDays, undecided, acceptedThisSprint } from "./store";
+import {
+  type DecisionAction, type Ticket, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, derive, estimateLabel,
+  externalLabel, label, revisitInWeeks,
+} from "./schema";
+import { type Store, defaultRevisit, revisitDue, triageQueue, acceptedThisSprint } from "./store";
 
 /** The decision loop. One ticket at a time, context pre-loaded, one keystroke
  *  per decision, capacity visible at the moment of choosing. */
@@ -25,11 +28,14 @@ export default function Triage({ store, onDecide, onUndo }: Props) {
   const [revisit, setRevisit] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
-  const queue = useMemo(
-    () => undecided(store).filter((t) => !skipped.includes(t.id)),
-    [store, skipped],
-  );
+  // Work that was deferred and has come back leads the queue: it has waited
+  // longest, and it arrives on the weekly revisit day rather than daily.
+  const due = useMemo(() => revisitDue(store), [store]);
+  const queue = useMemo(() => triageQueue(store, skipped), [store, skipped]);
   const current = queue[0] ?? null;
+  const currentRevisit = current
+    ? due.find((x) => x.ticket.id === current.id)?.revisit ?? null
+    : null;
   const target = store.settings.commitTargetPerSprint;
   const accepted = acceptedThisSprint(store);
   const pct = Math.min(100, (accepted / target) * 100);
@@ -95,6 +101,13 @@ export default function Triage({ store, onDecide, onUndo }: Props) {
         </div>
       )}
 
+      {current && currentRevisit && (
+        <div className="small dim" style={{ marginBottom: 8 }}>
+          <span className="badge flag">revisit due</span>{" "}
+          Deferred, and it came back on {currentRevisit}. Decide it again, or defer it further.
+        </div>
+      )}
+
       {current && <Card ticket={current} settings={store.settings} />}
 
       {current && pending && (
@@ -109,8 +122,19 @@ export default function Triage({ store, onDecide, onUndo }: Props) {
                  placeholder={pending === "Block" ? "waiting on the partner's sizing" : "one line"} />
           {pending === "Defer" && (
             <>
-              <label>Revisit on</label>
-              <input type="date" value={revisit} onChange={(e) => setRevisit(e.target.value)} />
+              <label>Come back to it on</label>
+              <div className="keys">
+                {REVISIT_WEEK_CHOICES.map((n) => (
+                  <button key={n} className={revisit === revisitInWeeks(n) ? "pick" : ""}
+                          onClick={() => setRevisit(revisitInWeeks(n))}>
+                    {n === 1 ? "next week" : `${n} weeks`} — {defaultRevisitLabel(revisitInWeeks(n))}
+                  </button>
+                ))}
+              </div>
+              <div className="small dim">
+                Revisits only ever land on {WEEKDAYS[REVISIT_WEEKDAY]}, so deferred work comes back in
+                one batch with the weekly triage instead of trickling in every day.
+              </div>
             </>
           )}
           <div className="keys">
@@ -136,11 +160,14 @@ export default function Triage({ store, onDecide, onUndo }: Props) {
   );
 }
 
-function defaultRevisit(): string {
-  const d = new Date(Date.now() + defaultRevisitDays * 86_400_000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function defaultRevisitLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return `${WEEKDAYS[dt.getDay()]} ${d} ${MONTHS[m - 1]}`;
 }
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function Card({ ticket, settings }: { ticket: Ticket; settings: Store["settings"] }) {
   const d = derive(ticket, settings);

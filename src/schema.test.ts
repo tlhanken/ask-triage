@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
   audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped,
-  inSprint, isFrozen, loadUnits, parseDate, queueHealth, scoreTicket, sprintNames,
+  inSprint, isFrozen, loadUnits, parseDate, queueHealth, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY,
+  revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
 } from "./schema";
 import {
-  HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, deleteTicket, explainPlan,
-  fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, recordDecision, removeSprint, revertTo,
-  shiftSprint, slippedIn, stats, acceptedThisSprint, undecided, undoLast, updateSprint, updateTicket,
-  withHistory,
+  HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit, deleteTicket,
+  explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, recordDecision, removeSprint,
+  revertTo, revisitDue, revisitFor, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
+  undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
 
@@ -328,6 +329,86 @@ describe("history and revert", () => {
     const s2 = revertTo(s1, 0, NOW);
     expect(s2.tickets.some((t) => t.id === 1)).toBe(true);
     expect(s2.nextTicketId).toBe(nextId);
+  });
+});
+
+describe("weekly revisits", () => {
+  it("lands every revisit on the weekly day, whatever day you defer from", () => {
+    const wed = new Date(2026, 9, 21);                       // Wed 21 Oct 2026
+    expect(REVISIT_WEEKDAY).toBe(1);                          // Monday
+    expect(revisitInWeeks(1, wed)).toBe("2026-10-26");        // the next Monday, not +7 days
+    expect(revisitInWeeks(2, wed)).toBe("2026-11-02");
+    for (const n of REVISIT_WEEK_CHOICES) {
+      expect(parseDate(revisitInWeeks(n, wed))!.getDay()).toBe(REVISIT_WEEKDAY);
+    }
+  });
+
+  it("gives a full week when today is already the revisit day", () => {
+    const mon = new Date(2026, 9, 19);                       // Mon 19 Oct 2026
+    expect(revisitInWeeks(1, mon)).toBe("2026-10-26");
+    expect(revisitInWeeks(4, mon)).toBe("2026-11-16");
+  });
+
+  it("is due once the day arrives, and not before", () => {
+    expect(revisitIsDue("2026-10-26", new Date(2026, 9, 25))).toBe(false);
+    expect(revisitIsDue("2026-10-26", new Date(2026, 9, 26))).toBe(true);
+    expect(revisitIsDue("2026-10-26", new Date(2026, 9, 30))).toBe(true);
+    expect(revisitIsDue(null)).toBe(false);
+    expect(revisitIsDue("")).toBe(false);
+  });
+
+  it("defaults to the weekly day rather than a date n days out", () => {
+    expect(parseDate(defaultRevisit(new Date(2026, 9, 21)))!.getDay()).toBe(REVISIT_WEEKDAY);
+  });
+});
+
+describe("deferred work comes back", () => {
+  const deferOn = new Date(2026, 9, 21);                     // Wed 21 Oct 2026
+
+  it("returns to the queue on its revisit day, and not before", () => {
+    const s = freshStore();
+    const id = s.tickets[0].id;
+    const deferred = recordDecision(s, id, "Defer", "not yet", "2026-11-02", deferOn);
+    expect(deferred.tickets.find((t) => t.id === id)!.state).toBe("Deferred");
+    expect(revisitDue(deferred, new Date(2026, 9, 26))).toEqual([]);      // still parked
+    const due = revisitDue(deferred, new Date(2026, 10, 2));
+    expect(due.map((x) => x.ticket.id)).toEqual([id]);
+    expect(due[0].revisit).toBe("2026-11-02");
+  });
+
+  it("stops coming back once it is decided again", () => {
+    const later = new Date(2026, 10, 2);
+    let s = freshStore();
+    const id = s.tickets[0].id;
+    s = recordDecision(s, id, "Defer", "not yet", "2026-11-02", deferOn);
+    expect(revisitDue(s, later)).toHaveLength(1);
+    s = recordDecision(s, id, "Accept", "", null, later);
+    expect(s.tickets.find((t) => t.id === id)!.state).toBe("Committed");
+    expect(revisitFor(s, id)).toBe("2026-11-02");              // the old defer is still on record
+    expect(revisitDue(s, later)).toEqual([]);                  // but it is no longer deferred
+  });
+
+  it("leads the triage queue with work that has come back", () => {
+    let s = freshStore();
+    const id = s.tickets[0].id;
+    s = recordDecision(s, id, "Defer", "later", "2026-11-02", deferOn);
+    // before its day it is not in the queue at all
+    expect(triageQueue(s, [], new Date(2026, 9, 26)).map((t) => t.id)).not.toContain(id);
+    // on its day it leads, ahead of the undecided
+    const on = triageQueue(s, [], new Date(2026, 10, 2));
+    expect(on[0].id).toBe(id);
+    expect(on.length).toBeGreaterThan(1);
+    // and skipping it takes it back out
+    expect(triageQueue(s, [id], new Date(2026, 10, 2)).map((t) => t.id)).not.toContain(id);
+  });
+
+  it("reports the most recent defer, so deferring again pushes the date out", () => {
+    let s = freshStore();
+    const id = s.tickets[0].id;
+    s = recordDecision(s, id, "Defer", "first", "2026-10-26", deferOn);
+    s = recordDecision(s, id, "Defer", "again", "2026-11-23", new Date(2026, 9, 26));
+    expect(revisitFor(s, id)).toBe("2026-11-23");
+    expect(revisitDue(s, new Date(2026, 10, 2))).toEqual([]);   // pushed out, so not due
   });
 });
 
