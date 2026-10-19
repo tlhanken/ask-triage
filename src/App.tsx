@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { type DecisionAction, type Ticket } from "./schema";
 import {
-  type Move, type Snapshot, type Store, addSprint, applyPlan, blankTicket, createTicket, deleteTicket,
-  freshStore, fillReleaseDates, load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save,
+  type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
+  deleteTicket,
+  freshStore, fillReleaseDates, load, moveTicketToSprint, recordDecision, removeProject, removeSprint,
+  revertTo, save,
   serialize, clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
@@ -139,7 +141,14 @@ export default function App() {
             onFillDates={() => act("fill in release dates", fillReleaseDates)}
           />
         )}
-        {tab === "projects" && <Projects store={store} onEdit={(t) => setEditing({ ticket: t })} />}
+        {tab === "projects" && (
+          <Projects
+            store={store}
+            onEdit={(t) => setEditing({ ticket: t })}
+            onAddProject={(n) => act(`add project ${n}`, (cur) => addProject(cur, n))}
+            onRemoveProject={(n) => act(`remove project ${n}`, (cur) => removeProject(cur, n))}
+          />
+        )}
         {tab === "register" && <Register store={store} onEdit={(t) => setEditing({ ticket: t })} />}
         {tab === "decisions" && <DecisionLog store={store} />}
         {tab === "history" && (
@@ -161,6 +170,8 @@ export default function App() {
       {creating && (
         <TicketForm
           initial={blankTicket()}
+          projects={store.settings.projects}
+          onAddProject={(n) => act(`add project ${n}`, (cur) => addProject(cur, n))}
           onCancel={() => setCreating(false)}
           onSave={(draft) => { act("new ticket", (cur) => createTicket(cur, draft)); setCreating(false); }}
         />
@@ -171,6 +182,8 @@ export default function App() {
           key={editing.ticket.id}
           initial={editing.ticket}
           editingId={editing.ticket.id}
+          projects={store.settings.projects}
+          onAddProject={(n) => act(`add project ${n}`, (cur) => addProject(cur, n))}
           onCancel={() => setEditing(null)}
           onSave={(draft, id) => {
             if (id) act(`edit ${id}`, (cur) => updateTicket(cur, id, draft));

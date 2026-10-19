@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
   audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped,
-  inSprint, isFrozen, loadUnits, matchProjects, PROJECT_SUGGESTION_CAP, PROJECTS, parseDate, queueHealth,
+  inSprint, isFrozen, loadUnits, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
+  queueHealth,
   REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
 } from "./schema";
 import {
-  HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit, deleteTicket,
-  explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, recordDecision, removeSprint,
+  HISTORY_CAP, addProject, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit,
+  deleteTicket, explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, projectUsage,
+  recordDecision, removeProject, removeSprint,
   revertTo, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
   undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
@@ -412,6 +414,40 @@ describe("deferred work comes back", () => {
   });
 });
 
+describe("the project list", () => {
+  it("starts with the default list", () => {
+    expect(freshStore().settings.projects).toEqual([...DEFAULT_PROJECTS]);
+  });
+
+  it("adds a project, trimming it and refusing blanks and duplicates", () => {
+    let s = freshStore();
+    s = addProject(s, "  Aurora  ");
+    expect(s.settings.projects).toContain("Aurora");
+    expect(addProject(s, "Aurora")).toBe(s);                  // duplicate: unchanged
+    expect(addProject(s, "   ")).toBe(s);                    // blank: unchanged
+  });
+
+  it("detaches a removed project from every ticket that carried it", () => {
+    const s = freshStore();
+    const carried = s.tickets.filter((t) => t.projects.includes("Atlas"));
+    expect(carried.length).toBeGreaterThan(0);
+    expect(projectUsage(s, "Atlas")).toBe(carried.length);
+
+    const after = removeProject(s, "Atlas");
+    expect(after.settings.projects).not.toContain("Atlas");
+    expect(after.tickets.every((t) => !t.projects.includes("Atlas"))).toBe(true);
+    expect(after.tickets.map((t) => t.id)).toEqual(s.tickets.map((t) => t.id));   // nothing lost
+  });
+
+  it("makes a removal one revertible action", () => {
+    const one = withHistory(freshStore(), "remove project Atlas", (cur) => removeProject(cur, "Atlas"), NOW);
+    expect(one.settings.projects).not.toContain("Atlas");
+    const back = revertTo(one, one.history.length - 1, NOW);
+    expect(back.settings.projects).toContain("Atlas");
+    expect(back.tickets.some((t) => t.projects.includes("Atlas"))).toBe(true);
+  });
+});
+
 describe("the file on disk", () => {
   it("is written indented, so a change reads as a change", () => {
     const out = serialize(freshStore());
@@ -457,9 +493,9 @@ describe("project picker", () => {
   });
 
   it("never offers what is already attached", () => {
-    const m = matchProjects("", ["Atlas"], PROJECTS);
+    const m = matchProjects("", ["Atlas"], DEFAULT_PROJECTS);
     expect(m.shown).not.toContain("Atlas");
-    expect(m.available).toBe(PROJECTS.length - 1);
+    expect(m.available).toBe(DEFAULT_PROJECTS.length - 1);
   });
 
   it("honours a custom cap", () => {

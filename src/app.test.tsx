@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
-import { derive, PROJECTS, revisitInWeeks } from "./schema";
-import { freshStore, undecided } from "./store";
+import { DEFAULT_PROJECTS, derive, revisitInWeeks } from "./schema";
+import { freshStore, load, undecided } from "./store";
 
 afterEach(() => {
   cleanup();
@@ -140,7 +140,7 @@ describe("project picker", () => {
     const input = openNewTicket();
     expect(screen.queryByRole("listbox")).toBeNull();          // closed until asked for
     fireEvent.focus(input);
-    expect(pickerOption().length).toBe(PROJECTS.length);
+    expect(pickerOption().length).toBe(DEFAULT_PROJECTS.length);
   });
 
   it("filters as you type and attaches the one you pick", () => {
@@ -183,6 +183,60 @@ describe("project picker", () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "zzz" } });
     expect(screen.getByText(/No project matches/)).toBeTruthy();
+  });
+});
+
+describe("managing the project list", () => {
+  const openManage = () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Projects$/ }));
+    fireEvent.click(screen.getByText(/Manage projects/));
+  };
+  /** The manage row for a given project. */
+  const rowFor = (name: string) =>
+    screen.getAllByRole("listitem").find((li) => li.querySelector("b")?.textContent === name)!;
+
+  it("adds a project from the manage panel", () => {
+    openManage();
+    fireEvent.change(screen.getByPlaceholderText(/New project name/), { target: { value: "Aurora" } });
+    fireEvent.click(screen.getByRole("button", { name: /add project/ }));
+    expect(screen.getByRole("button", { name: /^Aurora/ })).toBeTruthy();     // now in the switcher
+  });
+
+  it("names how many tickets a removal detaches, then detaches them", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    openManage();
+    const used = freshStore().tickets.filter((t) => t.projects.includes("Atlas")).length;
+    expect(used).toBeGreaterThan(0);
+
+    fireEvent.click(within(rowFor("Atlas")).getByRole("button", { name: /remove/ }));
+
+    expect(confirmSpy.mock.calls[0][0]).toContain(`${used} ticket`);         // the count is named
+    expect(screen.queryByRole("button", { name: /^Atlas/ })).toBeNull();     // gone from the switcher
+    expect(rowFor("Atlas")).toBeUndefined();
+    confirmSpy.mockRestore();
+  });
+
+  it("offers to add a project the picker cannot find, and attaches it", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /New ticket/ }));
+    const input = screen.getByRole("combobox", { name: "Relevant projects" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "Aurora" } });
+    expect(within(screen.getByRole("listbox")).queryAllByRole("option")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /add .Aurora. to the list/ }));
+    expect(screen.getByRole("button", { name: /Aurora ✕/ })).toBeTruthy();   // attached to the ticket
+  });
+
+  it("keeps a project name the tickets still carry when the list has forgotten it", () => {
+    const s = freshStore();
+    localStorage.setItem("revel-priority-tracker-v1", JSON.stringify({
+      ...s, settings: { ...s.settings, projects: ["Atlas"] },
+    }));
+    const loaded = load();
+    expect(loaded.settings.projects).toContain("Atlas");
+    expect(loaded.settings.projects).toContain("Platform");   // reclaimed from the tickets
   });
 });
 

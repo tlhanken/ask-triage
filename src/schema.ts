@@ -7,12 +7,16 @@
  * If it only adds colour, it does not belong here. The editor asks only
  * for what a human must decide; everything else is stamped by the app.
  *
- * PROJECTS below is the typesafe list — edit it here and every view
- * (form dropdowns, chips, the project view) follows automatically.
+ * DEFAULT_PROJECTS below seeds a new register. The list itself lives in the
+ * store's settings so projects can be added and removed at runtime — see
+ * addProject and removeProject in store.ts.
  */
 
-export const PROJECTS = ["Atlas", "Borealis", "Cinder", "Delta", "Platform"] as const;
-export type ProjectId = (typeof PROJECTS)[number];
+/** The projects a fresh register starts with. */
+export const DEFAULT_PROJECTS = ["Atlas", "Borealis", "Cinder", "Delta", "Platform"];
+
+/** A project name. A plain string now that the list is data rather than a union. */
+export type ProjectId = string;
 
 /**
  * How many suggestions a picker renders at once.
@@ -137,6 +141,8 @@ export interface Settings {
   throughputPerWeek: number;
   intakePerWeek: number;
   currentSprint: string;
+  /** The controlled project list. Data, not a compile-time union. */
+  projects: string[];
   sprints: Sprint[],             // the release columns, in display order
   weights: {
     critical: number;
@@ -159,6 +165,7 @@ export const DEFAULT_SETTINGS: Settings = {
   throughputPerWeek: 5,
   intakePerWeek: 7.5,
   currentSprint: "v0.23",
+  projects: [...DEFAULT_PROJECTS],
   sprints: [],                   // freshStore() fills dated defaults; see defaultSprints()
   weights: {
     critical: 100,

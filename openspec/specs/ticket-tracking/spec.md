@@ -51,9 +51,9 @@ label SHALL be derived from it.
 ### Requirement: Relevant projects
 
 A ticket SHALL belong to zero or more projects drawn from a controlled list. The
-list SHALL be defined in one place and drive every project display. Choosing a
-project SHALL narrow the controlled list by a typed filter and offer the result as
-a bounded suggestion list; projects SHALL NOT be created by typing.
+list SHALL be stored with the register and SHALL drive every project display.
+Choosing a project SHALL narrow the list by a typed filter and offer the result as
+a bounded suggestion list; projects SHALL NOT be created by typing alone.
 
 #### Scenario: Multiple projects
 
@@ -102,8 +102,14 @@ a bounded suggestion list; projects SHALL NOT be created by typing.
 #### Scenario: The list stays controlled
 
 - WHEN the typed text matches no project
-- THEN no project is offered and no project is created
-- AND the editor says the list is fixed
+- THEN no project is offered and no project is created by that act alone
+- AND adding one is available as a separate, explicit action
+
+#### Scenario: Adding from the picker
+
+- WHEN a typed name matches nothing and the add action is taken
+- THEN the name joins the controlled list
+- AND it is attached to the ticket being edited
 
 ### Requirement: Version sprints
 
@@ -597,3 +603,39 @@ per project.
 
 - WHEN the project view computes how many tickets each project holds
 - THEN every ticket is examined once per pass, not once per project
+
+### Requirement: Editing the project list
+
+Projects SHALL be addable and removable at runtime. Removing a project SHALL
+detach it from every ticket that carried it, and SHALL state how many tickets that
+is before doing so. A removal SHALL be a single revertible action.
+
+#### Scenario: Adding a project
+
+- WHEN a new project name is added
+- THEN it joins the list and is offered everywhere the list is used
+- AND a blank or duplicate name is refused without changing anything
+
+#### Scenario: Removing a project names its consequence
+
+- WHEN a project is removed
+- THEN the number of tickets that will be detached from it is stated first
+- AND the removal proceeds only on confirmation
+
+#### Scenario: Removal detaches rather than orphans
+
+- WHEN a project with tickets is removed
+- THEN it leaves the list
+- AND every ticket that carried it no longer does
+- AND no ticket is deleted or otherwise changed
+
+#### Scenario: A removal is revertible
+
+- WHEN a removal is reverted
+- THEN the project returns to the list and to the tickets that carried it
+
+#### Scenario: A name the tickets still carry is kept
+
+- WHEN a save's list has lost a name that tickets still reference
+- THEN that name is restored to the list
+- AND no ticket is left referencing a project no view can show

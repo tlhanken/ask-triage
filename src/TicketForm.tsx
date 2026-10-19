@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  type ProjectId, type Ticket, ESTIMATES, estimateLabel, PROJECTS, TICKET_TYPES, matchProjects,
+  type ProjectId, type Ticket, ESTIMATES, estimateLabel, TICKET_TYPES, matchProjects,
 } from "./schema";
 
 /**
@@ -15,12 +15,17 @@ import {
 interface Props {
   initial: Omit<Ticket, "id">;
   editingId?: number;
+  /** The controlled list, from the store — it is data now, not a compile-time const. */
+  projects: readonly string[];
   onSave: (draft: Omit<Ticket, "id">, id?: number) => void;
+  onAddProject: (name: string) => void;
   onCancel: () => void;
   onDelete?: (id: number) => void;
 }
 
-export default function TicketForm({ initial, editingId, onSave, onCancel, onDelete }: Props) {
+export default function TicketForm({
+  initial, editingId, projects, onSave, onAddProject, onCancel, onDelete,
+}: Props) {
   const [d, setD] = useState<Omit<Ticket, "id">>({
     ...initial,
     projects: [...initial.projects],
@@ -38,7 +43,7 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
   const [highlight, setHighlight] = useState(-1);          // -1: nothing picked yet
   const comboRef = useRef<HTMLDivElement>(null);
 
-  const { shown, total, available } = matchProjects(projectQuery, d.projects, PROJECTS);
+  const { shown, total, available } = matchProjects(projectQuery, d.projects, projects);
   const capped = total > shown.length;
   const at = Math.min(highlight, shown.length - 1);
 
@@ -51,20 +56,28 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
     return () => document.removeEventListener("mousedown", onDown);
   }, [projectsOpen]);
 
-  const addProject = (p: ProjectId) => {
+  const attachProject = (p: ProjectId) => {
     setD((cur) => (cur.projects.includes(p) ? cur : { ...cur, projects: [...cur.projects, p] }));
     setProjectQuery("");
     setHighlight(-1);
     setProjectsOpen(false);
   };
 
-  const removeProject = (p: ProjectId) =>
+  const detachProject = (p: ProjectId) =>
     setD((cur) => ({ ...cur, projects: cur.projects.filter((x) => x !== p) }));
+
+  /** Add to the controlled list and attach it here in one move. */
+  const createProject = () => {
+    const name = projectQuery.trim();
+    if (!name) return;
+    onAddProject(name);
+    attachProject(name);
+  };
 
   const projectKeys = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") { e.preventDefault(); setProjectsOpen(true); setHighlight(Math.min(at + 1, shown.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight(Math.max(at - 1, 0)); }
-    else if (e.key === "Enter") { if (projectsOpen && shown[at]) { e.preventDefault(); addProject(shown[at]); } }
+    else if (e.key === "Enter") { if (projectsOpen && shown[at]) { e.preventDefault(); attachProject(shown[at]); } }
     else if (e.key === "Escape") { if (projectsOpen) { e.preventDefault(); setProjectsOpen(false); } else setProjectQuery(""); }
   };
 
@@ -107,7 +120,7 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
               <div className="chips">
                 {d.projects.map((p) => (
                   <button key={p} type="button" className="chip on" title="click to remove"
-                          onClick={() => removeProject(p)}>{p} ✕</button>
+                          onClick={() => detachProject(p)}>{p} ✕</button>
                 ))}
               </div>
             )}
@@ -128,7 +141,7 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
                     <li key={p} role="option" aria-selected={i === at}
                         className={i === at ? "on" : undefined}
                         onMouseEnter={() => setHighlight(i)}
-                        onClick={() => addProject(p)}>
+                        onClick={() => attachProject(p)}>
                       {p}
                     </li>
                   ))}
@@ -139,9 +152,14 @@ export default function TicketForm({ initial, editingId, onSave, onCancel, onDel
 
             {total === 0 ? (
               <div className="small dim">
-                {projectQuery.trim()
-                  ? `No project matches “${projectQuery.trim()}” — the list is fixed`
-                  : "Every project already attached"}
+                {projectQuery.trim() ? (
+                  <>
+                    No project matches “{projectQuery.trim()}”.{" "}
+                    <button type="button" className="mini" onClick={createProject}>
+                      add “{projectQuery.trim()}” to the list
+                    </button>
+                  </>
+                ) : "Every project already attached"}
               </div>
             ) : (
               <div className="small dim">

@@ -5,6 +5,7 @@ import {
   type Sprint,
   type Ticket,
   DEFAULT_SETTINGS,
+  DEFAULT_PROJECTS,
   defaultSprints,
   derive,
   DEFAULT_REVISIT_WEEKS,
@@ -79,6 +80,7 @@ export function freshStore(): Store {
     settings: {
       ...DEFAULT_SETTINGS,
       sprints: defaultSprints(),
+      projects: [...DEFAULT_SETTINGS.projects],
       weights: { ...DEFAULT_SETTINGS.weights },
     },
     nextTicketId: tickets.reduce((m, t) => Math.max(m, t.id), 0) + 1,
@@ -117,6 +119,26 @@ function migrateSprints(sprints: unknown): Sprint[] {
 }
 
 /**
+ * Projects were a compile-time list before they were data, so a save that
+ * predates them has none. Seed that list in.
+ *
+ * A ticket may also name a project the list does not carry — from an older save,
+ * or from a project removed while the ticket was elsewhere. Those names are
+ * unioned in, because the alternative is a ticket that no project view can show,
+ * which is silent disappearance rather than a missing label.
+ */
+function migrateProjects(settingsProjects: unknown, tickets: Ticket[]): string[] {
+  const carried = Array.isArray(settingsProjects)
+    ? settingsProjects.filter((p): p is string => typeof p === "string" && p.trim() !== "")
+    : [];
+  const list = carried.length > 0 ? carried : [...DEFAULT_PROJECTS];
+  const missing = [...new Set(tickets.flatMap((t) => t.projects))]
+    .filter((p) => !list.includes(p))
+    .sort();
+  return [...list, ...missing];
+}
+
+/**
  * Tickets predate the tier split. Drop what the model no longer carries and
  * default what is new, rather than reseeding and losing the history.
  * `size` (S/M/L) becomes an estimate in sprints; owner, owner-type and
@@ -140,14 +162,19 @@ export function load(): Store {
     if (!raw) return freshStore();
     const parsed: unknown = JSON.parse(raw);
     if (!looksValid(parsed)) return freshStore();
+    const tickets = parsed.tickets.map(migrateTicket);
     // `history` arrived after the first release, so default it rather than
     // invalidating a save that predates it.
     return {
       ...parsed,
       history: Array.isArray(parsed.history) ? parsed.history : [],
-      tickets: parsed.tickets.map(migrateTicket),
-      // releases used to be plain names; give them dates rather than reseeding
-      settings: { ...parsed.settings, sprints: migrateSprints(parsed.settings.sprints) },
+      tickets,
+      settings: {
+        ...parsed.settings,
+        // releases used to be plain names; give them dates rather than reseeding
+        sprints: migrateSprints(parsed.settings.sprints),
+        projects: migrateProjects(parsed.settings.projects, tickets),
+      },
     };
   } catch {
     return freshStore();
@@ -600,6 +627,34 @@ export function recordDecision(
   const tickets = s.tickets.slice();
   tickets[idx] = next;
   return { ...s, tickets, decisions: [...s.decisions, decision], nextDecisionId: s.nextDecisionId + 1 };
+}
+
+/** Add a project to the controlled list. Blank names and duplicates are refused. */
+export function addProject(s: Store, name: string): Store {
+  const clean = name.trim();
+  if (!clean || s.settings.projects.includes(clean)) return s;
+  return { ...s, settings: { ...s.settings, projects: [...s.settings.projects, clean] } };
+}
+
+/** How many tickets currently carry a project. */
+export const projectUsage = (s: Store, name: string): number =>
+  s.tickets.filter((t) => t.projects.includes(name)).length;
+
+/**
+ * Remove a project from the list AND detach it from every ticket carrying it.
+ *
+ * Detaching is the point. Leaving the name on the tickets would keep them out of
+ * every project view, so the tickets would vanish from the only place that shows
+ * them — a worse outcome than losing a label. The whole action goes through the
+ * history layer, so a mistaken delete is revertible.
+ */
+export function removeProject(s: Store, name: string): Store {
+  return {
+    ...s,
+    settings: { ...s.settings, projects: s.settings.projects.filter((p) => p !== name) },
+    tickets: s.tickets.map((t) =>
+      t.projects.includes(name) ? { ...t, projects: t.projects.filter((p) => p !== name) } : t),
+  };
 }
 
 export function undoLast(s: Store): Store {
