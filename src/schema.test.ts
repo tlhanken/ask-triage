@@ -23,7 +23,7 @@ const isoFromNow = (days: number): string => {
 
 const mk = (over: Partial<Ticket>): Ticket => ({
   id: 1, name: "x", summary: "s", projects: ["Atlas"], externalUrl: null,
-  dueDate: null, estimate: 2, type: "Should", stakeholders: ["S"], notes: "",
+  dueDate: null, estimate: 2, priority: "Should", type: null, stakeholders: ["S"], notes: "",
   state: "New", opened: null, sprint: null, carryovers: 0,
   lastTouched: null, closed: null,
   ...over,
@@ -34,11 +34,11 @@ const NOW = new Date("2026-10-18T12:00:00Z");
 
 describe("derivation matches the spreadsheet", () => {
   const caseA = mk({
-    type: "Critical", estimate: 2, state: "In Progress", opened: "2026-09-08",
+    priority: "Critical", estimate: 2, state: "In Progress", opened: "2026-09-08",
     dueDate: "2026-11-01", sprint: "v0.23", carryovers: 1, lastTouched: "2026-10-15",
   });
   const caseB = mk({
-    type: "Should", estimate: 1, state: "Accepted-Backlog", opened: "2026-06-20",
+    priority: "Should", estimate: 1, state: "Accepted-Backlog", opened: "2026-06-20",
     dueDate: null, carryovers: 0, lastTouched: "2026-09-23",
   });
 
@@ -65,7 +65,7 @@ describe("derivation matches the spreadsheet", () => {
   });
 
   it("UNPLANNED fires for a critical with no sprint", () => {
-    expect(computeFlags(mk({ type: "Critical", sprint: null }), DEFAULT_SETTINGS, NOW))
+    expect(computeFlags(mk({ priority: "Critical", sprint: null }), DEFAULT_SETTINGS, NOW))
       .toContain("UNPLANNED");
   });
 
@@ -163,10 +163,10 @@ describe("editing in the browser (store CRUD)", () => {
 
   it("patches a ticket and re-stamps lastTouched", () => {
     const s = freshStore();
-    const s1 = updateTicket(s, 3, { name: "Renamed", type: "Critical" }, NOW);
+    const s1 = updateTicket(s, 3, { name: "Renamed", priority: "Critical" }, NOW);
     const t = s1.tickets.find((x) => x.id === 3)!;
     expect(t.name).toBe("Renamed");
-    expect(t.type).toBe("Critical");
+    expect(t.priority).toBe("Critical");
     expect(t.lastTouched).toBe("2026-10-18");
   });
 
@@ -516,6 +516,9 @@ describe("review sweep", () => {
     expect(kinds).toContain("NO-SUMMARY");
     expect(kinds).toContain("NO-PROJECTS");
     expect(kinds).toContain("NO-STAKEHOLDERS");
+    expect(kinds).toContain("NO-PRIORITY");        // unclassified is missing critical info
+    expect(kinds).toContain("NO-CATEGORY");
+    expect(kinds).toContain("NO-DUE");
     expect(alerts.every((a) => a.why.length > 0)).toBe(true);   // each says why it matters
   });
 
@@ -523,8 +526,8 @@ describe("review sweep", () => {
     const s = freshStore();
     const good: Ticket = {
       ...blankTicket(), id: 901, name: "good", summary: "why it exists", projects: ["Atlas"],
-      stakeholders: ["Dana R."], state: "In Progress", dueDate: isoFromNow(60), type: "Should",
-      estimate: 1, lastTouched: isoFromNow(0),
+      priority: "Should", type: "Back-end", stakeholders: ["Dana R."], state: "In Progress",
+      dueDate: isoFromNow(60), estimate: 1, lastTouched: isoFromNow(0),
     };
     expect(auditTicket(good, s.settings, NOW).filter((a) => a.severity === "gap")).toEqual([]);
   });
@@ -533,9 +536,13 @@ describe("review sweep", () => {
     const s = freshStore();
     const t: Ticket = {
       ...blankTicket(), id: 902, name: "committed", summary: "x", projects: ["Atlas"],
-      stakeholders: ["Dana R."], state: "Committed", dueDate: null, estimate: 1,
+      priority: "Should", type: "Back-end", stakeholders: ["Dana R."], state: "Committed",
+      dueDate: null, estimate: 1,
     };
-    expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("COMMITTED-NO-DUE");
+    const kinds = auditTicket(t, s.settings, NOW).map((a) => a.kind);
+    expect(kinds).toContain("NO-DUE");
+    expect(auditTicket(t, s.settings, NOW).find((a) => a.kind === "NO-DUE")!.why)
+      .toMatch(/cannot be late/);
   });
 
   it("catches work left behind in a release that already shipped", () => {
@@ -558,14 +565,15 @@ describe("review sweep", () => {
     expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("PAST-DUE");
   });
 
-  it("leaves a closed ticket alone apart from its gaps", () => {
+  it("leaves a closed ticket entirely alone", () => {
     const s = freshStore();
     const t: Ticket = {
       ...blankTicket(), id: 905, name: "done", summary: "x", projects: ["Atlas"],
       stakeholders: ["Dana R."], state: "Done", dueDate: isoFromNow(-30), estimate: 1,
       lastTouched: isoFromNow(-30),
     };
-    expect(auditTicket(t, s.settings, NOW)).toEqual([]);        // nothing can slip once closed
+    // not even its gaps: finished work needs nothing, and saying otherwise is noise
+    expect(auditTicket(t, s.settings, NOW)).toEqual([]);
   });
 
   it("sweeps open tickets by default and can include closed", () => {

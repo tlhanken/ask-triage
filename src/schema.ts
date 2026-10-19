@@ -63,8 +63,27 @@ export function matchProjects<T extends string>(
   return { shown: matched.slice(0, cap), total: matched.length, available: pool.length };
 }
 
-export const TICKET_TYPES = ["Critical", "Should", "Nice-to-have"] as const;
-export type TicketType = (typeof TICKET_TYPES)[number];
+/**
+ * Priority is how much this matters. It was called `type`, which never said what
+ * it meant.
+ *
+ * "Unclassified" is the default and is also the Backlog marker: a ticket with no
+ * priority cannot be sorted into a priority column, so the absence of a choice is
+ * what puts it in the backlog.
+ */
+export const PRIORITIES = ["Unclassified", "Critical", "Should", "Nice-to-have"] as const;
+export type Priority = (typeof PRIORITIES)[number];
+export const DEFAULT_PRIORITY: Priority = "Unclassified";
+/** The ones a person actually picks. Unclassified is the absence of a choice, not a choice. */
+export const CLASSIFIABLE_PRIORITIES = ["Critical", "Should", "Nice-to-have"] as const;
+
+/**
+ * Type is which part of the system the work sits in — a different axis from
+ * priority, and deliberately allowed to be unset. At intake you often do not know
+ * yet, which is what the completeness check and the audit are for.
+ */
+export const CATEGORIES = ["Front-end", "Back-end", "Driver", "Server"] as const;
+export type Category = (typeof CATEGORIES)[number];
 
 /** How long it is expected to take, in sprints. 3 reads as "three or more". */
 export const ESTIMATES = [1, 2, 3] as const;
@@ -99,7 +118,7 @@ export const CLOSED: State[] = ["Done", "Won't Do"];
  * not in these lists does not belong on a ticket.
  */
 export const CORE_FIELDS = ["name", "summary", "projects", "externalUrl", "dueDate", "estimate"] as const;
-export const OPTIONAL_FIELDS = ["type", "stakeholders", "notes"] as const;
+export const OPTIONAL_FIELDS = ["priority", "type", "stakeholders", "notes"] as const;
 export const BACKGROUND_FIELDS = ["state", "opened", "sprint", "carryovers", "lastTouched", "closed"] as const;
 
 export interface Ticket {
@@ -114,7 +133,8 @@ export interface Ticket {
   estimate: Estimate;            // how many sprints of work this is
 
   // ---- optional: available, never required
-  type: TicketType;              // Critical / Should / Nice-to-have
+  priority: Priority;            // Unclassified / Critical / Should / Nice-to-have
+  type: Category | null;         // Front-end / Back-end / Driver / Server; null = not known yet
   stakeholders: string[];        // who is told about it
   notes: string;                 // freeform context that has nowhere else to live
 
@@ -321,7 +341,7 @@ export function computeFlags(t: Ticket, s: Settings, now = new Date()): Flag[] {
   const age = daysSince(t.opened, now);
   const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
 
-  if (t.type === "Critical" && !t.sprint) out.push("UNPLANNED");
+  if (t.priority === "Critical" && !t.sprint) out.push("UNPLANNED");
   if (live && toDue !== null && toDue <= s.weights.dueRiskDays) out.push("DATE-RISK");
   if (live && t.carryovers >= s.weights.slippageThreshold) out.push("SLIPPED");
   if (live && t.lastTouched && daysSince(t.lastTouched, now)! > s.weights.staleDays) out.push("STALE");
@@ -360,7 +380,10 @@ const FLAG_WHY: Record<Flag, { what: string; why: (s: Settings) => string }> = {
  */
 export function auditTicket(t: Ticket, s: Settings, now = new Date()): Alert[] {
   const out: Alert[] = [];
-  const live = isOpen(t);
+  // Closed work cannot slip and does not need classifying, so the sweep stops
+  // here. Raising gaps on finished tickets is noise, and the audit exists to
+  // point at work that still needs something.
+  if (!isOpen(t)) return out;
 
   if (!t.summary.trim()) {
     out.push({ kind: "NO-SUMMARY", severity: "gap", what: "No summary",
@@ -370,16 +393,22 @@ export function auditTicket(t: Ticket, s: Settings, now = new Date()): Alert[] {
     out.push({ kind: "NO-PROJECTS", severity: "gap", what: "No project",
       why: "It appears in no project update, so nobody but you will ever see it." });
   }
+  if (t.priority === DEFAULT_PRIORITY) {
+    out.push({ kind: "NO-PRIORITY", severity: "gap", what: "Unclassified",
+      why: "No priority, so the board has nothing to sort it by and it stays in the backlog." });
+  }
+  if (t.type === null) {
+    out.push({ kind: "NO-CATEGORY", severity: "gap", what: "No category",
+      why: "Not marked Front-end / Back-end / Driver / Server, so it falls out of those filters." });
+  }
+  if (!t.dueDate) {
+    out.push({ kind: "NO-DUE", severity: "gap", what: "No date",
+      why: "Nothing to time it against, so no release can be judged as fitting — and committed work cannot be late." });
+  }
   if (t.stakeholders.length === 0) {
     out.push({ kind: "NO-STAKEHOLDERS", severity: "gap", what: "Nobody waiting",
       why: "No stakeholder attached — worth checking this is still a real ask." });
   }
-  if (live && (t.state === "Committed" || t.state === "In Progress") && !t.dueDate) {
-    out.push({ kind: "COMMITTED-NO-DUE", severity: "gap", what: "Committed, no date",
-      why: "Committed work with no due date cannot be late, so nothing will ever notice it slipping." });
-  }
-
-  if (!live) return out;                        // a closed ticket cannot slip
 
   const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
   if (toDue !== null && toDue < 0) {
@@ -441,7 +470,7 @@ export function audit(
 /** Draft priority score. A proposal the human overrides, never the verdict. */
 export function scoreTicket(t: Ticket, s: Settings, now = new Date()): number {
   const w = s.weights;
-  let n = t.type === "Critical" ? w.critical : t.type === "Should" ? w.should : 0;
+  let n = t.priority === "Critical" ? w.critical : t.priority === "Should" ? w.should : 0;
   const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
   if (toDue !== null) n += Math.max(0, w.urgencyHorizonDays - toDue) * w.urgencyPerDay;
   const age = daysSince(t.opened, now);

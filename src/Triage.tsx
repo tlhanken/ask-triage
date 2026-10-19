@@ -177,7 +177,8 @@ function Card({ ticket, settings }: { ticket: Ticket; settings: Store["settings"
       <h2>{d.id ? `${label(d.id)} · ` : ""}{d.name}</h2>
       <div className="badges">
         {d.projects.map((p) => <span className="badge" key={p}>{p}</span>)}
-        <span className={"badge " + (d.type === "Critical" ? "critical" : "")}>{d.type}</span>
+        <span className={"badge " + (d.priority === "Critical" ? "critical" : "")}>{d.priority}</span>
+        {d.type && <span className="badge">{d.type}</span>}
         <span className="badge">{estimateLabel(d.estimate)}</span>
         {d.state !== "New" && <span className="badge">{d.state}</span>}
         {d.flags.map((f) => <span className="badge flag" key={f}>{f}</span>)}

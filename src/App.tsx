@@ -3,7 +3,8 @@ import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
   deleteTicket,
-  freshStore, fillReleaseDates, load, moveTicketToSprint, recordDecision, removeProject, removeSprint,
+  freshStore, fillReleaseDates, load, migrateStore, moveTicketToSprint, recordDecision, removeProject,
+  removeSprint,
   revertTo, save,
   serialize, clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
@@ -57,7 +58,7 @@ export default function App() {
         if (!Array.isArray(parsed?.tickets) || parsed.tickets.length === 0) return;
         setStore((cur) =>
           cur.history.length === 0 && cur.decisions.length === 0
-            ? { ...parsed, history: Array.isArray(parsed.history) ? parsed.history : [] }
+            ? migrateStore(parsed)
             : cur,
         );
         setStatus("loaded from data/register.json");
@@ -93,7 +94,7 @@ export default function App() {
     try {
       const parsed = JSON.parse(raw) as Store;
       if (!Array.isArray(parsed?.tickets)) { setStatus("that is not a register for this app"); return; }
-      act("load from file", () => ({ ...parsed, history: Array.isArray(parsed.history) ? parsed.history : [] }));
+      act("load from file", () => migrateStore(parsed));
       setStatus("loaded from file");
     } catch {
       setStatus("could not read that file");

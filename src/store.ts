@@ -6,6 +6,9 @@ import {
   type Ticket,
   DEFAULT_SETTINGS,
   DEFAULT_PROJECTS,
+  DEFAULT_PRIORITY,
+  CATEGORIES,
+  PRIORITIES,
   defaultSprints,
   derive,
   DEFAULT_REVISIT_WEEKS,
@@ -158,8 +161,51 @@ function migrateTicket(raw: unknown): Ticket {
   delete t.nextAction;
   if (typeof t.estimate !== "number") t.estimate = 2;
   if (typeof t.notes !== "string") t.notes = "";
+
+  // `type` used to hold the priority and now holds the category. Move the old
+  // value across and leave the category unset: relabelling old data as a
+  // category would invent a judgement nobody made, and the audit will ask for it.
+  const old = t.type;
+  const oldIsPriority = typeof old === "string" && (PRIORITIES as readonly string[]).includes(old);
+  const oldIsCategory = typeof old === "string" && (CATEGORIES as readonly string[]).includes(old);
+  const hasNewPriority = typeof t.priority === "string"
+    && (PRIORITIES as readonly string[]).includes(t.priority as string);
+
+  if (oldIsPriority && (!hasNewPriority || t.priority === DEFAULT_PRIORITY)) {
+    // The old single axis: `type` held the priority. A priority that is only the
+    // default does not outrank real information. The category stays unset —
+    // inventing one would be a judgement nobody made, and the audit will ask.
+    t.priority = old;
+    t.type = null;
+  } else if (hasNewPriority) {
+    t.type = oldIsCategory ? old : null;
+  } else {
+    t.priority = DEFAULT_PRIORITY;
+    t.type = null;
+  }
   if (!Array.isArray(t.stakeholders)) t.stakeholders = [];
   return t as unknown as Ticket;
+}
+
+/**
+ * Bring any older save up to the current shape. Used by EVERY load path —
+ * localStorage, the file endpoint, and a file the user picks. Skipping it on one
+ * path means an old-shaped register arrives badly typed, which is how a rename
+ * turns into undefined priorities and a board with nothing in it.
+ */
+export function migrateStore(parsed: unknown): Store {
+  const s = parsed as Store;
+  const tickets = (s.tickets as unknown[]).map(migrateTicket);
+  return {
+    ...s,
+    history: Array.isArray(s.history) ? s.history : [],
+    tickets,
+    settings: {
+      ...s.settings,
+      sprints: migrateSprints(s.settings.sprints),
+      projects: migrateProjects(s.settings.projects, tickets),
+    },
+  };
 }
 
 export function load(): Store {
@@ -168,20 +214,7 @@ export function load(): Store {
     if (!raw) return freshStore();
     const parsed: unknown = JSON.parse(raw);
     if (!looksValid(parsed)) return freshStore();
-    const tickets = parsed.tickets.map(migrateTicket);
-    // `history` arrived after the first release, so default it rather than
-    // invalidating a save that predates it.
-    return {
-      ...parsed,
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-      tickets,
-      settings: {
-        ...parsed.settings,
-        // releases used to be plain names; give them dates rather than reseeding
-        sprints: migrateSprints(parsed.settings.sprints),
-        projects: migrateProjects(parsed.settings.projects, tickets),
-      },
-    };
+    return migrateStore(parsed);
   } catch {
     return freshStore();
   }
@@ -229,7 +262,8 @@ export const blankTicket = (): Omit<Ticket, "id"> => ({
   externalUrl: null,
   dueDate: null,
   estimate: 2,
-  type: "Should",
+  priority: DEFAULT_PRIORITY,     // a new ask is unclassified until someone says otherwise
+  type: null,                     // and its category is usually not known yet
   stakeholders: [],
   notes: "",
   state: "New",
@@ -480,7 +514,7 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
     load.set(sprint.name, next);
 
     const bits: string[] = [];
-    if (t.type === "Critical") bits.push("critical");
+    if (t.priority === "Critical") bits.push("critical");
     if (t.dueDate) bits.push(`due ${t.dueDate}`);
     bits.push(estimateLabel(t.estimate));
 

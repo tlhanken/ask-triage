@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  type ProjectId, type Ticket, ESTIMATES, estimateLabel, TICKET_TYPES, matchProjects,
+  type ProjectId, type Ticket, CATEGORIES, ESTIMATES, PRIORITIES, estimateLabel, matchProjects,
 } from "./schema";
 
 /**
@@ -190,9 +190,18 @@ export default function TicketForm({
         <details className="tier">
           <summary>Optional fields <span className="dim small">type, stakeholders, notes — never required</span></summary>
           <div className="form">
+            <label>Priority
+              <select value={d.priority}
+                      onChange={(e) => set("priority", e.target.value as Ticket["priority"])}>
+                {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+
             <label>Type
-              <select value={d.type} onChange={(e) => set("type", e.target.value as Ticket["type"])}>
-                {TICKET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              <select value={d.type ?? ""}
+                      onChange={(e) => set("type", (e.target.value || null) as Ticket["type"])}>
+                <option value="">— not known yet —</option>
+                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
 

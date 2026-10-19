@@ -284,7 +284,8 @@ function Column({
               <button className="tname" onClick={() => onEdit(t)}>{d.name}</button>
               <div className="chips small">
                 {d.projects.map((p) => <span className="chip mini" key={p}>{p}</span>)}
-                <span className={"chip mini " + (d.type === "Critical" ? "crit" : "")}>{d.type}</span>
+                <span className={"chip mini " + (d.priority === "Critical" ? "crit" : "")}>{d.priority}</span>
+                {d.type && <span className="chip mini">{d.type}</span>}
               </div>
               <div className="small dim">
                 {d.dueDate ? `due ${d.dueDate}` : "no date"} · score {d.score}

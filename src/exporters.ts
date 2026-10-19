@@ -53,7 +53,7 @@ export function projectsToMarkdown(s: Store, now = new Date()): string {
 }
 
 export function registerToCsv(s: Store, now = new Date()): string {
-  const cols = ["id", "name", "summary", "projects", "type", "stakeholders", "notes", "estimate",
+  const cols = ["id", "name", "summary", "projects", "priority", "type", "stakeholders", "notes", "estimate",
     "state", "opened", "dueDate", "sprint", "carryovers", "lastTouched", "closed", "score", "flags",
     "externalUrl"];
   const q = (v: unknown): string => {
@@ -62,7 +62,7 @@ export function registerToCsv(s: Store, now = new Date()): string {
   };
   const rows = s.tickets.map((t) => {
     const d: DerivedTicket = derive(t, s.settings, now);
-    return [d.id, d.name, d.summary, d.projects.join("; "), d.type, d.stakeholders.join("; "), d.notes,
+    return [d.id, d.name, d.summary, d.projects.join("; "), d.priority, d.type ?? "", d.stakeholders.join("; "), d.notes,
       d.estimate, d.state, d.opened, d.dueDate, d.sprint, d.carryovers, d.lastTouched, d.closed,
       d.score, d.flags.join("|"), d.externalUrl]
       .map(q).join(",");
