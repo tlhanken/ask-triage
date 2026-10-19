@@ -1,7 +1,13 @@
 # ticket-tracking Specification
 
 ## Purpose
-TBD - created by archiving change revel-01-trim-ticket-fields. Update Purpose after archive.
+
+Track the software asks the team and the partner company owe, and decide what to do
+about them week by week.
+
+The unit is the ask, not the project: work is captured, ranked, triaged, assigned to
+releases, audited and reported from one register. It runs in a browser with no
+backend and keeps its state in a git-tracked JSON file.
 
 ## Requirements
 

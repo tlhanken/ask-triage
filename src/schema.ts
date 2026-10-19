@@ -1,7 +1,7 @@
 /**
  * schema.ts — the data model. Pure logic, no DOM.
  *
- * Revel priority tracker. A ticket is the unit.
+ * Priority tracker. A ticket is the unit.
  *
  * FIELD DISCIPLINE: every stored field must drive a decision or a view.
  * If it only adds colour, it does not belong here. The editor asks only
@@ -92,7 +92,6 @@ export const DECISIONS = ["Accept", "Defer", "Decline", "Block"] as const;
 export type DecisionAction = (typeof DECISIONS)[number];
 
 export const CLOSED: State[] = ["Done", "Won't Do"];
-export const OPEN_STATES: State[] = STATES.filter((s) => !CLOSED.includes(s)) as State[];
 
 /**
  * Three tiers. Only CORE is asked for; OPTIONAL is one click away; BACKGROUND
@@ -212,8 +211,6 @@ export function daysSince(isoDate: string | null | undefined, now = new Date()):
 }
 
 /** The default release plan. v0.23 is current: it freezes soon and ships in two weeks. */
-export const DEFAULT_SPRINT_NAMES = ["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]; // newest left
-
 export function defaultSprints(now = new Date()): Sprint[] {
   const plan: Array<[string, number, number]> = [
     ["v0.25", 42, 56], ["v0.24", 28, 42], ["v0.23", 5, 14], ["v0.22", -9, 0], ["v0.21", -23, -14],
@@ -228,6 +225,7 @@ const isoFrom = (now: Date, inDays: number): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
+/** The release names in display order. Used by the tests; kept here as the accessor. */
 export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
 
 /**
@@ -308,9 +306,6 @@ export const isOpen = (t: Ticket): boolean => !CLOSED.includes(t.state);
 export const backlog = (ts: Ticket[]): Ticket[] => ts.filter((t) => isOpen(t) && !t.sprint);
 
 export const inSprint = (ts: Ticket[], sprint: string): Ticket[] => ts.filter((t) => t.sprint === sprint);
-
-export const forProject = (ts: Ticket[], p: ProjectId): Ticket[] =>
-  ts.filter((t) => t.projects.includes(p));
 
 /** The label for an external link, derived rather than stored (e.g. "PX-118"). */
 export function externalLabel(url: string | null | undefined): string {

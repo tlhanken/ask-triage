@@ -62,7 +62,13 @@ export interface Store {
   history: Snapshot[];
 }
 
-/** Bumped with the field trim: older saves validate false and seed fresh. */
+/**
+ * The browser storage key. DO NOT RENAME it with the product.
+ *
+ * It identifies every existing save. Changing it makes load() find nothing, seed
+ * a fresh register, and silently orphan whatever the user had — a rename is a
+ * cosmetic change and this would be a data-loss event wearing one.
+ */
 const KEY = "revel-priority-tracker-v1";
 
 const clone = (t: Ticket): Ticket => ({

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
-  audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, forProject, hasShipped,
+  audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, hasShipped,
   inSprint, isFrozen, loadUnits, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
   queueHealth,
   REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
@@ -145,9 +145,10 @@ describe("projects", () => {
   it("a ticket can belong to several projects at once", () => {
     const s = freshStore();
     const multi = updateTicket(s, 1, { projects: ["Atlas", "Cinder"] }, NOW);
-    expect(forProject(multi.tickets, "Atlas").some((t) => t.id === 1)).toBe(true);
-    expect(forProject(multi.tickets, "Cinder").some((t) => t.id === 1)).toBe(true);
-    expect(forProject(multi.tickets, "Delta").some((t) => t.id === 1)).toBe(false);
+    const on = (p: string) => multi.tickets.filter((t) => t.projects.includes(p)).map((t) => t.id);
+    expect(on("Atlas")).toContain(1);
+    expect(on("Cinder")).toContain(1);
+    expect(on("Delta")).not.toContain(1);
   });
 });
 
@@ -251,7 +252,7 @@ describe("decision loop", () => {
     const id = undecided(s0)[0].id;
     const s1 = recordDecision(s0, id, "Defer", "behind SSO", "2027-01-15", NOW);
     const md = decisionsToMarkdown(s1, NOW);
-    expect(md).toContain("Revel priority tracker");
+    expect(md).toContain("Priority tracker");
     expect(md).toContain("Deferred (1)");
     expect(md).toContain("behind SSO");
     expect(md).toContain("revisit 2027-01-15");

@@ -19,7 +19,7 @@ const colByTitle = (title: string) => cols().find((c) => colTitle(c) === title);
 describe("triage loop", () => {
   it("renders the top ticket with its decision context pre-loaded", () => {
     render(<App />);
-    expect(screen.getByText("Revel priority tracker")).toBeTruthy();
+    expect(screen.getByText("Priority tracker")).toBeTruthy();
     const h2 = screen.getByRole("heading", { level: 2 }).textContent ?? "";
     expect(h2).toMatch(/^TKT-\d\d · /);
     expect(screen.getByText(/Committed this sprint/)).toBeTruthy();

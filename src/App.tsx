@@ -92,7 +92,7 @@ export default function App() {
     if (!raw) { setStatus("no file loaded"); return; }
     try {
       const parsed = JSON.parse(raw) as Store;
-      if (!Array.isArray(parsed?.tickets)) { setStatus("that file is not a Revel register"); return; }
+      if (!Array.isArray(parsed?.tickets)) { setStatus("that is not a register for this app"); return; }
       act("load from file", () => ({ ...parsed, history: Array.isArray(parsed.history) ? parsed.history : [] }));
       setStatus("loaded from file");
     } catch {
@@ -103,7 +103,7 @@ export default function App() {
   return (
     <>
       <header className="top">
-        <h1>Revel priority tracker</h1>
+        <h1>Priority tracker</h1>
         <nav className="tabs">
           <button className={tab === "triage" ? "on" : ""} onClick={() => setTab("triage")}>Triage</button>
           <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Review</button>

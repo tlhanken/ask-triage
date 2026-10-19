@@ -45,7 +45,7 @@ export function decideWrite(existingRaw: string | null, incomingRaw: string): Wr
   const existingTickets = existing ?? 0;
 
   if (incoming === null) {
-    return { allow: false, reason: "refused: that is not a Revel register", existingTickets, incomingTickets: 0 };
+    return { allow: false, reason: "refused: that is not a register for this app", existingTickets, incomingTickets: 0 };
   }
   if (existing !== null && existing > 0 && incoming === 0) {
     return {
@@ -116,7 +116,7 @@ export function localDataFile(file = nodePath.resolve(process.cwd(), "data/regis
   };
 
   return {
-    name: "revel-local-data",
+    name: "priority-tracker-local-data",
     configureServer(server: { middlewares: { use(fn: unknown): void } }) {
       server.middlewares.use(handler);
     },

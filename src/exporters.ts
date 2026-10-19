@@ -9,7 +9,7 @@ export function decisionsToMarkdown(s: Store, now = new Date()): string {
   const d: Decision[] = s.decisions;
   const by = (a: string) => d.filter((x) => x.action === a);
   const L: string[] = [];
-  L.push(`# Revel priority tracker — ${fmtDate(now.toISOString())} (${s.settings.currentSprint})`);
+  L.push(`# Priority tracker — ${fmtDate(now.toISOString())} (${s.settings.currentSprint})`);
   L.push("");
   L.push(`${d.length} decisions · ${by("Accept").length} accepted · ${by("Defer").length} deferred · ` +
          `${by("Decline").length} declined · ${by("Block").length} blocked`);
