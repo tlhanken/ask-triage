@@ -12,6 +12,12 @@ describe("decideWrite", () => {
     expect(decideWrite(register(3), register(4)).allow).toBe(true);
   });
 
+  it("is not fooled by indentation", () => {
+    const pretty = JSON.stringify({ version: 3, tickets: [{ id: 1 }], decisions: [], history: [] }, null, 2) + "\n";
+    expect(decideWrite(pretty, register(2)).allow).toBe(true);
+    expect(decideWrite(register(2), JSON.stringify({ tickets: [] }, null, 2)).allow).toBe(false);
+  });
+
   it("refuses to replace a register that has tickets with one that does not", () => {
     const v = decideWrite(register(14), register(0));
     expect(v.allow).toBe(false);

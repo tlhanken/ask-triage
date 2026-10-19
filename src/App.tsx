@@ -3,7 +3,7 @@ import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addSprint, applyPlan, blankTicket, createTicket, deleteTicket,
   freshStore, fillReleaseDates, load, moveTicketToSprint, recordDecision, removeSprint, revertTo, save,
-  clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
+  serialize, clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
   downloadJson, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
@@ -69,7 +69,7 @@ export default function App() {
   useEffect(() => {
     if (!fileMode) return;
     const t = window.setTimeout(() => {
-      void saveToFile(JSON.stringify(store)).then((r) =>
+      void saveToFile(serialize(store)).then((r) =>
         setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
     }, 600);
     return () => window.clearTimeout(t);
@@ -147,11 +147,11 @@ export default function App() {
             store={store}
             onRevert={(i) => act("revert", (cur) => revertTo(cur, i))}
             onSaveFile={() => {
-              void saveToFile(JSON.stringify(store)).then((r) =>
+              void saveToFile(serialize(store)).then((r) =>
                 setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
             }}
             onLoadFile={loadFromFile}
-            onDownload={() => downloadJson("register.json", JSON.stringify(store, null, 2))}
+            onDownload={() => downloadJson("register.json", serialize(store))}
             fileMode={fileMode}
             status={status}
           />

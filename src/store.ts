@@ -175,6 +175,19 @@ export function defaultRevisit(now = new Date()): string {
   return revisitInWeeks(DEFAULT_REVISIT_WEEKS, now);
 }
 
+/**
+ * The register as it is written to disk: indented, with a trailing newline.
+ *
+ * The file exists so git can diff and revert it. Written compact, every save is
+ * a single 6KB line and every change reads as a whole-file rewrite, which throws
+ * away the only reason for tracking it. Indented, a change to one ticket is a
+ * change to a few lines. The trailing newline keeps it a well-formed text file
+ * and stops "No newline at end of file" noise in diffs.
+ */
+export function serialize(s: Store): string {
+  return `${JSON.stringify(s, null, 2)}\n`;
+}
+
 /** Only the fields a person decides. Nothing else is asked for. */
 export const blankTicket = (): Omit<Ticket, "id"> => ({
   name: "",

@@ -8,7 +8,7 @@ import {
 import {
   HISTORY_CAP, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit, deleteTicket,
   explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, recordDecision, removeSprint,
-  revertTo, revisitDue, revisitFor, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
+  revertTo, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
   undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
@@ -409,6 +409,23 @@ describe("deferred work comes back", () => {
     s = recordDecision(s, id, "Defer", "again", "2026-11-23", new Date(2026, 9, 26));
     expect(revisitFor(s, id)).toBe("2026-11-23");
     expect(revisitDue(s, new Date(2026, 10, 2))).toEqual([]);   // pushed out, so not due
+  });
+});
+
+describe("the file on disk", () => {
+  it("is written indented, so a change reads as a change", () => {
+    const out = serialize(freshStore());
+    expect(out.endsWith("\n")).toBe(true);                     // a well-formed text file
+    expect(out).toContain('\n  "tickets": [');
+    expect(out.split("\n").length).toBeGreaterThan(100);       // not one long line
+    expect(JSON.parse(out).tickets).toHaveLength(14);          // and still valid JSON
+  });
+
+  it("survives a round trip through the parser unchanged", () => {
+    const s = freshStore();
+    const back = JSON.parse(serialize(s));
+    expect(back.tickets).toEqual(s.tickets);
+    expect(back.settings).toEqual(s.settings);
   });
 });
 
