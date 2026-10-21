@@ -431,4 +431,16 @@ describe("history tab", () => {
     expect(screen.getByRole("button", { name: /load from file/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /download json/i })).toBeTruthy();
   });
+
+  it("keeps reset out of the header, and records it so it can be reverted", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+    expect(within(document.querySelector("header")!).queryByRole("button", { name: /reset/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /reset to demo data/i }));
+    expect(screen.getByText("reset to demo data")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /revert to here/i })).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
 });

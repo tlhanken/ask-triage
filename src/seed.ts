@@ -1,4 +1,4 @@
-import type { Ticket } from "./schema";
+import { type Ticket, addDays, iso } from "./schema";
 
 /** Seed tickets: a realistic mix so the loop is worth running in ~2 minutes.
  *  Replace with your real rows once the loop feels right.
@@ -6,12 +6,9 @@ import type { Ticket } from "./schema";
  *  Two of them (12 and 14) deliberately have no category, so the audit's
  *  "no category" alert has something real to find on a fresh register. */
 
-const DAY = 86_400_000;
 const now = new Date();
-const isoish = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const ago = (d: number) => isoish(new Date(now.getTime() - d * DAY));
-const ahead = (d: number) => isoish(new Date(now.getTime() + d * DAY));
+const ago = (d: number) => iso(addDays(now, -d));
+const ahead = (d: number) => iso(addDays(now, d));
 
 export const SEED_TICKETS: Ticket[] = [
   {

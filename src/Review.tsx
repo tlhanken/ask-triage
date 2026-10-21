@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ignoreShortcut } from "./keys";
 import { type Ticket, audit, derive, estimateLabel, externalLabel, label } from "./schema";
 import { type Store } from "./store";
 
@@ -43,9 +44,7 @@ export default function Review({ store, onEdit }: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (ignoreShortcut(e)) return;
       const k = e.key.toLowerCase();
       if (k === "arrowright" || k === "j") { move(1); e.preventDefault(); }
       else if (k === "arrowleft" || k === "k") { move(-1); e.preventDefault(); }
@@ -99,7 +98,7 @@ export default function Review({ store, onEdit }: Props) {
 
             {row.ticket.externalUrl && (
               <p className="small dim">
-                partner ticket:{" "}
+                external ticket:{" "}
                 <a href={row.ticket.externalUrl} target="_blank" rel="noreferrer">
                   {externalLabel(row.ticket.externalUrl)}
                 </a>

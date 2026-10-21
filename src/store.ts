@@ -6,6 +6,7 @@ import {
   type Ticket,
   DEFAULT_SETTINGS,
   DEFAULT_PROJECTS,
+  addDays,
   DEFAULT_PRIORITY,
   CATEGORIES,
   PRIORITIES,
@@ -96,6 +97,21 @@ export function freshStore(): Store {
     nextDecisionId: 1,
     history: [],
   };
+}
+
+/**
+ * Replace the register with the demo data, as a recordable change.
+ *
+ * The register file is untracked, so this must never be a dead end: it keeps the
+ * history (the caller records it, so it can be reverted like any other change),
+ * keeps the decision log, which is append-only, and gives the demo tickets fresh
+ * ids so no id is ever reused and no old decision attaches to a demo ticket.
+ */
+export function resetToSeed(s: Store): Store {
+  const seed = freshStore();
+  const start = s.nextTicketId;
+  const tickets = seed.tickets.map((t, i) => ({ ...t, id: start + i }));
+  return { ...s, tickets, settings: seed.settings, nextTicketId: start + tickets.length };
 }
 
 /** Validate the parsed shape; anything unrecognised falls back to seed. */
@@ -208,13 +224,26 @@ export function migrateStore(parsed: unknown): Store {
   };
 }
 
+/**
+ * Parse, validate and migrate a stored register — the ONE way in, used by every
+ * load path (browser storage, the file endpoint, a file the user picks). A path
+ * that skips any of the three is how one copy arrives badly typed while another
+ * arrives fine. Returns null for anything that is not a register this version can
+ * read, so it is refused whole rather than loaded in part.
+ */
+export function readStore(raw: string): Store | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return looksValid(parsed) ? migrateStore(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function load(): Store {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return freshStore();
-    const parsed: unknown = JSON.parse(raw);
-    if (!looksValid(parsed)) return freshStore();
-    return migrateStore(parsed);
+    return (raw && readStore(raw)) || freshStore();
   } catch {
     return freshStore();
   }
@@ -228,14 +257,6 @@ export function save(s: Store): void {
   }
 }
 
-export function clear(): void {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
 /** Deferred work returns on the weekly revisit day — see REVISIT_WEEKDAY. */
 export function defaultRevisit(now = new Date()): string {
   return revisitInWeeks(DEFAULT_REVISIT_WEEKS, now);
@@ -244,11 +265,12 @@ export function defaultRevisit(now = new Date()): string {
 /**
  * The register as it is written to disk: indented, with a trailing newline.
  *
- * The file exists so git can diff and revert it. Written compact, every save is
- * a single 6KB line and every change reads as a whole-file rewrite, which throws
- * away the only reason for tracking it. Indented, a change to one ticket is a
- * change to a few lines. The trailing newline keeps it a well-formed text file
- * and stops "No newline at end of file" noise in diffs.
+ * Nothing diffs this file automatically — it is untracked, and the History tab is
+ * what reverts it. But it is the durable record, and it does get read and
+ * hand-compared against a saved copy. Written compact, every save is a single 6KB
+ * line: unreadable, and no two versions can be told apart by eye. Indented, a
+ * change to one ticket is a change to a few lines. The trailing newline keeps it
+ * a well-formed text file.
  */
 export function serialize(s: Store): string {
   return `${JSON.stringify(s, null, 2)}\n`;
@@ -305,12 +327,14 @@ export function updateTicket(s: Store, id: number, patch: Partial<Ticket>, now =
   };
 }
 
+/**
+ * Remove a ticket. Its decisions stay: the decision log is an append-only record
+ * of what was decided at the time, and it is also where a deferral's revisit
+ * date lives — so dropping them would leave a deleted-then-restored ticket that
+ * never comes back from its deferral.
+ */
 export function deleteTicket(s: Store, id: number): Store {
-  return {
-    ...s,
-    tickets: s.tickets.filter((t) => t.id !== id),
-    decisions: s.decisions.filter((d) => d.ticketId !== id),
-  };
+  return { ...s, tickets: s.tickets.filter((t) => t.id !== id) };
 }
 
 // ---------------------------------------------------------------- sprints
@@ -354,7 +378,8 @@ export function shiftSprint(s: Store, name: string, delta: -1 | 1): Store {
 
 // ---------------------------------------------------------------- history
 
-/** Kept small on purpose: snapshots live in localStorage, which is not large. */
+/** Kept small on purpose: snapshots ride along inside the store, which is written
+ *  to localStorage as well as to the file, and localStorage is not large. */
 export const HISTORY_CAP = 25;
 
 const capture = (s: Store): string => JSON.stringify({ tickets: s.tickets, settings: s.settings });
@@ -382,18 +407,22 @@ export function withHistory(
 }
 
 /**
- * Tickets that were placed into a release AFTER its freeze date. Derived from
- * the recorded moves rather than from a field on the ticket — which keeps the
- * ticket lean, and the history window is exactly the one that matters here.
+ * Tickets that were placed into a release on or after its freeze date. Derived
+ * from the recorded moves rather than from a field on the ticket — which keeps
+ * the ticket lean, and the history window is exactly the one that matters here.
+ *
+ * A release is frozen ON its freeze day, so a move that day counts. The move's
+ * timestamp is stored in UTC and compared as a LOCAL date, like the freeze date.
  */
 export function slippedIn(s: Store, sprint: string, now = new Date()): Snapshot[] {
   const sp = findSprint(s.settings, sprint);
   if (!sp || sp.freeze === null || !isFrozen(sp, now)) return [];
+  const freeze = sp.freeze;
   return s.history.filter(
     (h) =>
       h.op?.kind === "move" &&
       h.op.sprint === sprint &&
-      h.at.slice(0, 10) > sp.freeze!,
+      iso(new Date(h.at)) >= freeze,
   );
 }
 
@@ -581,16 +610,14 @@ export function fillReleaseDates(s: Store, now = new Date()): Store {
     .sort(compareSprints);
   if (undated.length === 0) return s;
 
-  const DAY = 86_400_000;
-  const span = s.settings.sprintLengthDays * DAY;
   // Freeze a week before shipping, matching the default plan's lead. The lead
   // matters: freeze-on-today would hand back a release that is already frozen,
   // which is exactly the state this action exists to repair.
-  const lead = 7 * DAY;
+  const lead = 7;
   const dates: Record<string, { freeze: string; release: string }> = {};
   undated.forEach((name, i) => {
-    const release = new Date(now.getTime() + (i + 1) * span);
-    dates[name] = { freeze: iso(new Date(release.getTime() - lead)), release: iso(release) };
+    const releaseIn = (i + 1) * s.settings.sprintLengthDays;
+    dates[name] = { freeze: iso(addDays(now, releaseIn - lead)), release: iso(addDays(now, releaseIn)) };
   });
 
   return {

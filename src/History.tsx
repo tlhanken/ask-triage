@@ -1,11 +1,13 @@
 import type { Store } from "./store";
 import { HISTORY_CAP } from "./store";
+import { localStamp } from "./schema";
 
 /** Data & history: the version layer.
  *
- *  In-app history is fast and lives in this browser. The file on disk is what
- *  git can see and revert. They are complements, not duplicates: history is for
- *  "undo that", the file is for "go back to last Tuesday". */
+ *  Nothing here is committed, so the History tab is the only way back, and it
+ *  does both jobs: restore the state before one change ("undo that"), or jump to
+ *  any earlier state in the window ("go back to last Tuesday"). The snapshots
+ *  ride inside the store, so they travel with it wherever it is saved. */
 
 interface Props {
   store: Store;
@@ -13,12 +15,13 @@ interface Props {
   onSaveFile: () => void;
   onLoadFile: () => void;
   onDownload: () => void;
+  onReset: () => void;
   fileMode: boolean;
   status: string;
 }
 
 export default function History({
-  store, onRevert, onSaveFile, onLoadFile, onDownload, fileMode, status,
+  store, onRevert, onSaveFile, onLoadFile, onDownload, onReset, fileMode, status,
 }: Props) {
   const items = store.history.map((s, i) => ({ ...s, index: i })).reverse();
 
@@ -30,12 +33,15 @@ export default function History({
         <button onClick={onDownload}>Download JSON</button>
         <div className="spacer" />
         <span className="dim small">{status}</span>
+        <button className="dim" onClick={onReset} title="Replace the register with the demo data — revertible">
+          Reset to demo data
+        </button>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="dim small">
           {fileMode
-            ? "A local file endpoint is available, so this data is also written to data/register.json — commit that file to keep history in git."
+            ? "A local file endpoint is available, so this data is also written to the register file (data/register.json unless ASK_TRIAGE_DATA_FILE says otherwise). That file is untracked, so it is the only copy: download a JSON copy to keep a backup."
             : "No file endpoint here (static build), so this data lives in this browser and in whatever you download or save yourself."}
         </div>
       </div>
@@ -56,7 +62,7 @@ export default function History({
         <ul className="log">
           {items.map((s) => (
             <li key={s.index}>
-              <span className="when mono small">{s.at.replace("T", " ").slice(0, 16)}</span>
+              <span className="when mono small">{localStamp(s.at)}</span>
               <span className="what">
                 <b>{s.label}</b>
               </span>

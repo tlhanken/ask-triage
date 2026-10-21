@@ -217,6 +217,24 @@ const pad = (n: number) => String(n).padStart(2, "0");
 /** Local-date ISO (yyyy-mm-dd) — avoids the UTC off-by-one on evening edits. */
 export const iso = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+/**
+ * The local day `n` calendar days from `d`, at midnight. Adding n × 24 hours
+ * instead skips or repeats a date when the span crosses a DST change late at
+ * night, so every "N days from now" goes through here.
+ */
+export const addDays = (d: Date, n: number): Date =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+
+/**
+ * A stored timestamp (UTC ISO, which is right for storage) as the LOCAL date and
+ * time a person reads. Slicing the stored string instead shows UTC, which in the
+ * evening west of Greenwich is already tomorrow.
+ */
+export function localStamp(at: string): string {
+  const d = new Date(at);
+  return `${iso(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Parse an ISO date as a LOCAL date, not UTC midnight. */
 export function parseDate(s: string): Date {
   const [y, m, d] = s.split("-").map(Number);
@@ -236,14 +254,9 @@ export function defaultSprints(now = new Date()): Sprint[] {
     ["v0.25", 42, 56], ["v0.24", 28, 42], ["v0.23", 5, 14], ["v0.22", -9, 0], ["v0.21", -23, -14],
   ];
   return plan.map(([name, freezeIn, releaseIn]) => ({
-    name, freeze: isoFrom(now, freezeIn), release: isoFrom(now, releaseIn),
+    name, freeze: iso(addDays(now, freezeIn)), release: iso(addDays(now, releaseIn)),
   }));
 }
-
-const isoFrom = (now: Date, inDays: number): string => {
-  const d = new Date(now.getTime() + inDays * MS_DAY);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 /** The release names in display order. Used by the tests; kept here as the accessor. */
 export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
@@ -285,8 +298,12 @@ export const isFrozen = (sp: Sprint | undefined, now = new Date()): boolean =>
 export const hasShipped = (sp: Sprint | undefined, now = new Date()): boolean =>
   !!sp && sp.release !== null && daysSince(sp.release, now)! >= 0;
 
+/** Days from today until an ISO date — negative once it has passed. */
+export const daysUntil = (isoDate: string | null | undefined, now = new Date()): number | null =>
+  isoDate ? -daysSince(isoDate, now)! : null;
+
 export const daysToRelease = (sp: Sprint | undefined, now = new Date()): number | null =>
-  sp && sp.release ? -daysSince(sp.release, now)! : null;
+  daysUntil(sp?.release, now);
 
 /**
  * Deferred work comes back on ONE day a week, not on a spread of daily dates.
@@ -339,7 +356,7 @@ export function computeFlags(t: Ticket, s: Settings, now = new Date()): Flag[] {
   const out: Flag[] = [];
   const live = isOpen(t);
   const age = daysSince(t.opened, now);
-  const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
+  const toDue = daysUntil(t.dueDate, now);
 
   if (t.priority === "Critical" && !t.sprint) out.push("UNPLANNED");
   if (live && toDue !== null && toDue <= s.weights.dueRiskDays) out.push("DATE-RISK");
@@ -410,7 +427,7 @@ export function auditTicket(t: Ticket, s: Settings, now = new Date()): Alert[] {
       why: "No stakeholder attached — worth checking this is still a real ask." });
   }
 
-  const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
+  const toDue = daysUntil(t.dueDate, now);
   if (toDue !== null && toDue < 0) {
     out.push({ kind: "PAST-DUE", severity: "risk", what: "Past due",
       why: `Its due date passed ${-toDue} day${-toDue === 1 ? "" : "s"} ago and it is still open.` });
@@ -471,7 +488,7 @@ export function audit(
 export function scoreTicket(t: Ticket, s: Settings, now = new Date()): number {
   const w = s.weights;
   let n = t.priority === "Critical" ? w.critical : t.priority === "Should" ? w.should : 0;
-  const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
+  const toDue = daysUntil(t.dueDate, now);
   if (toDue !== null) n += Math.max(0, w.urgencyHorizonDays - toDue) * w.urgencyPerDay;
   const age = daysSince(t.opened, now);
   if (age !== null) n += (Math.min(age, 365) / 30) * w.agePer30Days;
@@ -487,7 +504,7 @@ function waitedLabel(t: Ticket, now: Date): string {
 }
 
 export function derive(t: Ticket, s: Settings, now = new Date()): DerivedTicket {
-  const toDue = t.dueDate ? -daysSince(t.dueDate, now)! : null;
+  const toDue = daysUntil(t.dueDate, now);
   return {
     ...t,
     score: scoreTicket(t, s, now),

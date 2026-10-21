@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  type DerivedTicket, type Ticket, CATEGORIES, derive, externalLabel, PRIORITIES,
+  type DerivedTicket, type Ticket, CATEGORIES, derive, externalLabel, PRIORITIES, STATES,
 } from "./schema";
 import type { Store } from "./store";
 
@@ -47,12 +47,11 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
   return (
     <div>
       <div className="toolbar">
-        <input placeholder="filter name, summary, project, owner, stakeholder, ticket…" value={q}
+        <input placeholder="filter name, summary, project, notes, stakeholder, ticket…" value={q}
                onChange={(e) => setQ(e.target.value)} style={{ minWidth: 300 }} />
         <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
           <option value="">all states</option>
-          {["New", "Accepted-Backlog", "Committed", "In Progress", "Blocked", "Deferred", "Won't Do", "Done"]
-            .map((s) => <option key={s} value={s}>{s}</option>)}
+          {STATES.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
           <option value="">any priority</option>

@@ -129,7 +129,7 @@ export default function Sprints({
             <div className="plan-head" style={{ marginTop: 10 }}>
               <span className="dim small">
                 {plan.undated.join(", ")} {plan.undated.length === 1 ? "has" : "have"} no release date,
-                so {"it"} cannot be checked against a due date.
+                so {plan.undated.length === 1 ? "it" : "they"} cannot be checked against a due date.
               </span>
               <div className="spacer" />
               <button onClick={() => { onFillDates(); setPlan(null); }}>

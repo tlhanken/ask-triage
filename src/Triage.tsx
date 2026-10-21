@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ignoreShortcut } from "./keys";
 import {
   type DecisionAction, type Ticket, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, derive, estimateLabel,
   externalLabel, label, revisitInWeeks,
@@ -58,9 +59,7 @@ export default function Triage({ store, onDecide, onUndo }: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (ignoreShortcut(e)) return;
       const k = e.key.toLowerCase();
       if (pending) {
         if (k === "enter") { commit(pending); e.preventDefault(); }
@@ -193,7 +192,7 @@ function Card({ ticket, settings }: { ticket: Ticket; settings: Store["settings"
         <dd>
           {d.dueDate ?? "no hard date"}
           {due !== null && (
-            <span className={"badge " + (due <= 21 ? "flag" : "")} style={{ marginLeft: 8 }}>
+            <span className={"badge " + (due <= settings.weights.dueRiskDays ? "flag" : "")} style={{ marginLeft: 8 }}>
               {due < 0 ? `${-due}d overdue` : `${due}d left`}
             </span>
           )}

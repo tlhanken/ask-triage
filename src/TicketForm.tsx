@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  type ProjectId, type Ticket, CATEGORIES, ESTIMATES, PRIORITIES, estimateLabel, matchProjects,
+  type ProjectId, type Ticket, CATEGORIES, ESTIMATES, PRIORITIES, estimateLabel, label, matchProjects,
 } from "./schema";
 
 /**
@@ -99,7 +99,7 @@ export default function TicketForm({
     <div className="modal" role="dialog" aria-label={editingId ? "Edit ticket" : "New ticket"}>
       <div className="sheet">
         <div className="sheet-head">
-          <h2>{editingId ? `Edit TKT-${String(editingId).padStart(2, "0")}` : "New ticket"}</h2>
+          <h2>{editingId ? `Edit ${label(editingId)}` : "New ticket"}</h2>
           <button className="dim" onClick={onCancel}>close ✕</button>
         </div>
 
@@ -188,7 +188,7 @@ export default function TicketForm({
         </div>
 
         <details className="tier">
-          <summary>Optional fields <span className="dim small">type, stakeholders, notes — never required</span></summary>
+          <summary>Optional fields <span className="dim small">priority, type, stakeholders, notes — never required</span></summary>
           <div className="form">
             <label>Priority
               <select value={d.priority}

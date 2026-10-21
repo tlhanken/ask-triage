@@ -3,14 +3,15 @@ import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
   deleteTicket,
-  freshStore, fillReleaseDates, load, migrateStore, moveTicketToSprint, recordDecision, removeProject,
-  removeSprint,
+  fillReleaseDates, load, moveTicketToSprint, readStore, recordDecision, removeProject,
+  removeSprint, resetToSeed,
   revertTo, save,
-  serialize, clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
+  serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
-  downloadJson, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
+  fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
 } from "./persist";
+import { download } from "./exporters";
 import Triage from "./Triage";
 import Sprints from "./Sprints";
 import Projects from "./Projects";
@@ -21,7 +22,11 @@ import TicketForm from "./TicketForm";
 import SprintForm from "./SprintForm";
 import Review from "./Review";
 
-type Tab = "triage" | "review" | "sprints" | "projects" | "register" | "decisions" | "history";
+const TABS = [
+  ["triage", "Triage"], ["review", "Review"], ["sprints", "Sprints"], ["projects", "Projects"],
+  ["register", "Register"], ["decisions", "Decisions"], ["history", "History"],
+] as const;
+type Tab = (typeof TABS)[number][0];
 
 export default function App() {
   const [store, setStore] = useState<Store>(() => load());
@@ -47,24 +52,20 @@ export default function App() {
       if (cancelled) return;
       setFileMode(available);
       if (!available) {
-        setStatus("this browser only — no file endpoint, so nothing is written to data/register.json");
+        setStatus("this browser only — no file endpoint, so nothing is written to disk");
         return;
       }
-      setStatus("writing to data/register.json");
+      setStatus("writing to the register file");
       const raw = await loadFromEndpoint();
       if (cancelled || !raw) return;
-      try {
-        const parsed = JSON.parse(raw) as Store;
-        if (!Array.isArray(parsed?.tickets) || parsed.tickets.length === 0) return;
-        setStore((cur) =>
-          cur.history.length === 0 && cur.decisions.length === 0
-            ? migrateStore(parsed)
-            : cur,
-        );
-        setStatus("loaded from data/register.json");
-      } catch {
-        /* keep whatever we have */
-      }
+      // An empty register is never adopted: fresh state always carries the seed,
+      // so an empty file can only be an accident.
+      const fromFile = readStore(raw);
+      if (!fromFile || fromFile.tickets.length === 0) return;
+      setStore((cur) =>
+        cur.history.length === 0 && cur.decisions.length === 0 ? fromFile : cur,
+      );
+      setStatus("loaded from the register file");
     })();
     return () => { cancelled = true; };
   }, []);
@@ -82,23 +83,21 @@ export default function App() {
     act(`${action.toLowerCase()} ${ticketId}`, (cur) => recordDecision(cur, ticketId, action, reason, revisit));
 
   const reset = () => {
-    if (window.confirm("Reset to seed data? This discards every ticket edit and decision.")) {
-      act("reset to seed data", () => freshStore());
-      clear();
+    if (window.confirm(
+      "Replace every ticket and release with the demo data? This is recorded, so it can be " +
+      "reverted from History. The decision log is kept.",
+    )) {
+      act("reset to demo data", resetToSeed);
     }
   };
 
   const loadFromFile = async () => {
     const raw = (await loadFromEndpoint()) ?? (await loadFromPicker());
     if (!raw) { setStatus("no file loaded"); return; }
-    try {
-      const parsed = JSON.parse(raw) as Store;
-      if (!Array.isArray(parsed?.tickets)) { setStatus("that is not a register for this app"); return; }
-      act("load from file", () => migrateStore(parsed));
-      setStatus("loaded from file");
-    } catch {
-      setStatus("could not read that file");
-    }
+    const loaded = readStore(raw);
+    if (!loaded) { setStatus("that is not a register this version can read"); return; }
+    act("load from file", () => loaded);
+    setStatus("loaded from file");
   };
 
   return (
@@ -106,20 +105,15 @@ export default function App() {
       <header className="top">
         <h1>Priority tracker</h1>
         <nav className="tabs">
-          <button className={tab === "triage" ? "on" : ""} onClick={() => setTab("triage")}>Triage</button>
-          <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Review</button>
-          <button className={tab === "sprints" ? "on" : ""} onClick={() => setTab("sprints")}>Sprints</button>
-          <button className={tab === "projects" ? "on" : ""} onClick={() => setTab("projects")}>Projects</button>
-          <button className={tab === "register" ? "on" : ""} onClick={() => setTab("register")}>Register</button>
-          <button className={tab === "decisions" ? "on" : ""} onClick={() => setTab("decisions")}>Decisions</button>
-          <button className={tab === "history" ? "on" : ""} onClick={() => setTab("history")}>History</button>
+          {TABS.map(([id, name]) => (
+            <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{name}</button>
+          ))}
         </nav>
         <div className="spacer" />
         <div className="dim small">
           {s.open} open · {s.total} tickets · queued {Math.round(s.avgWaitWeeks)}w · {s.accepted}/{s.target} this sprint
         </div>
         <button className="pick" onClick={() => setCreating(true)}>+ New ticket</button>
-        <button className="dim" onClick={reset} title="Reset to seed data">reset</button>
       </header>
 
       <main>
@@ -161,7 +155,8 @@ export default function App() {
                 setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
             }}
             onLoadFile={loadFromFile}
-            onDownload={() => downloadJson("register.json", serialize(store))}
+            onDownload={() => download("register.json", serialize(store), "application/json")}
+            onReset={reset}
             fileMode={fileMode}
             status={status}
           />

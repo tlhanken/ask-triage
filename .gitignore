@@ -3,6 +3,10 @@ dist/
 *.local
 .DS_Store
 
+# Server settings: copy .env.example to .env.local. A plain .env is ignored too,
+# in case it is copied there instead; only the example is tracked.
+.env
+
 # The live register is your data, not the project's. A fresh clone starts from
 # src/seed.ts instead, so nothing here is needed to run the app. Kept out of
 # history too — the commits that carried it were purged before the first push.

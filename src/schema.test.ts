@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
-  audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, hasShipped,
-  inSprint, isFrozen, loadUnits, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
+  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, addDays, backlog,
+  audit, auditTicket, computeFlags, defaultSprints, derive, externalLabel, fillState, findSprint, hasShipped, iso,
+  inSprint, isFrozen, loadUnits, localStamp, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
   queueHealth,
   REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
 } from "./schema";
 import {
   HISTORY_CAP, addProject, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit,
   deleteTicket, explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, projectUsage,
-  recordDecision, removeProject, removeSprint,
-  revertTo, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
+  recordDecision, readStore, removeProject, removeSprint,
+  revertTo, resetToSeed, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
   undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
-import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
+import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, stamp, toJson } from "./exporters";
 
 /** A due date N days from the real clock, since derive() defaults to now. */
 const isoFromNow = (days: number): string => {
@@ -170,12 +170,20 @@ describe("editing in the browser (store CRUD)", () => {
     expect(t.lastTouched).toBe("2026-10-18");
   });
 
-  it("deletes a ticket and the decisions that referenced it", () => {
+  it("deletes a ticket but keeps its decisions, which are an append-only record", () => {
     const s = recordDecision(freshStore(), 2, "Defer", "later", null, NOW);
     expect(s.decisions).toHaveLength(1);
     const s1 = deleteTicket(s, 2);
     expect(s1.tickets.some((t) => t.id === 2)).toBe(false);
-    expect(s1.decisions).toHaveLength(0);
+    expect(s1.decisions).toEqual(s.decisions);
+  });
+
+  it("a deferred ticket that is deleted and restored still comes back on its revisit day", () => {
+    const s = recordDecision(freshStore(), 2, "Defer", "later", "2026-11-02", NOW);
+    const s1 = withHistory(s, "delete 2", (cur) => deleteTicket(cur, 2), NOW);
+    const s2 = revertTo(s1, 0, NOW);
+    expect(revisitFor(s2, 2)).toBe("2026-11-02");
+    expect(revisitDue(s2, new Date(2026, 10, 2)).map((x) => x.ticket.id)).toContain(2);
   });
 
   it("does not mutate the array it was given", () => {
@@ -333,6 +341,24 @@ describe("history and revert", () => {
     expect(s2.tickets.some((t) => t.id === 1)).toBe(true);
     expect(s2.nextTicketId).toBe(nextId);
   });
+
+  it("a reset to demo data is recorded, and reverting it brings the register back", () => {
+    const s = createTicket(freshStore(), { ...blankTicket(), name: "real work" });
+    const s1 = withHistory(s, "reset to demo data", resetToSeed, NOW);
+    expect(s1.history).toHaveLength(1);
+    expect(s1.tickets.some((t) => t.name === "real work")).toBe(false);
+    expect(revertTo(s1, 0, NOW).tickets.some((t) => t.name === "real work")).toBe(true);
+  });
+
+  it("a reset never reuses an id and keeps the decision log", () => {
+    let s = freshStore();
+    s = recordDecision(s, 1, "Defer", "later", "2026-11-02", NOW);
+    const before = s.nextTicketId;
+    const s1 = resetToSeed(s);
+    expect(Math.min(...s1.tickets.map((t) => t.id))).toBe(before);
+    expect(s1.nextTicketId).toBe(before + s1.tickets.length);
+    expect(s1.decisions).toEqual(s.decisions);
+  });
 });
 
 describe("weekly revisits", () => {
@@ -463,6 +489,31 @@ describe("the file on disk", () => {
     const back = JSON.parse(serialize(s));
     expect(back.tickets).toEqual(s.tickets);
     expect(back.settings).toEqual(s.settings);
+  });
+});
+
+describe("one way in for every load path", () => {
+  it("reads a saved register back", () => {
+    const s = freshStore();
+    const back = readStore(serialize(s))!;
+    expect(back.tickets).toEqual(s.tickets);
+    expect(back.settings).toEqual(s.settings);
+  });
+
+  it("migrates an old shape on the way in", () => {
+    const s = freshStore();
+    const legacy = { ...s, tickets: [{ ...s.tickets[0], priority: undefined, type: "Critical" }] };
+    const back = readStore(JSON.stringify(legacy))!;
+    expect(back.tickets[0].priority).toBe("Critical");
+    expect(back.tickets[0].type).toBeNull();
+  });
+
+  it("refuses what is not a register, rather than half-loading it", () => {
+    const s = freshStore();
+    expect(readStore("not json")).toBeNull();
+    expect(readStore(JSON.stringify({ tickets: [] }))).toBeNull();               // no settings
+    expect(readStore(JSON.stringify({ ...s, version: 2 }))).toBeNull();          // unknown version
+    expect(readStore(JSON.stringify({ ...s, tickets: [{ id: "x" }] }))).toBeNull();
   });
 });
 
@@ -816,5 +867,47 @@ describe("release dates and feature freeze", () => {
     const a = withHistory(s, "move 3 to v0.24", (cur) => moveTicketToSprint(cur, 3, "v0.24", NOW), NOW);
     expect(a.history[0].op).toBeUndefined();
     expect(slippedIn(a, "v0.24", NOW)).toHaveLength(0);
+  });
+
+  // The suite runs in a negative-offset timezone (see vite.config.ts), so an
+  // evening timestamp is already the next day in UTC.
+  const frozenOn = (freeze: string) =>
+    updateSprint(freshStore(), "v0.23", { freeze, release: "2026-12-01" });
+  const moveAt = (s: ReturnType<typeof freshStore>, at: Date) =>
+    withHistory(s, "move 2 to v0.23", (cur) => moveTicketToSprint(cur, 2, "v0.23", at), at,
+      { kind: "move", ticketId: 2, sprint: "v0.23" });
+
+  it("counts a move made on the freeze day itself, since the release is frozen that day", () => {
+    const s = moveAt(frozenOn("2026-10-10"), new Date(2026, 9, 10, 9, 0));
+    expect(slippedIn(s, "v0.23", NOW)).toHaveLength(1);
+  });
+
+  it("judges a move by its local date, not its UTC one", () => {
+    // 23:30 local on the 9th is already the 10th in UTC.
+    const s = moveAt(frozenOn("2026-10-10"), new Date(2026, 9, 9, 23, 30));
+    expect(new Date(2026, 9, 9, 23, 30).toISOString().slice(0, 10)).toBe("2026-10-10");
+    expect(slippedIn(s, "v0.23", NOW)).toHaveLength(0);
+  });
+});
+
+describe("timestamps are shown in local time", () => {
+  const evening = new Date(2026, 9, 20, 23, 30);       // already the 21st in UTC
+
+  it("adds calendar days, not 24-hour blocks, so a DST change cannot skip a date", () => {
+    // US clocks spring forward on 2027-03-14: 23:30 on the 13th + 24h is 00:30 on the 15th.
+    const lateNight = new Date(2027, 2, 14 - 1, 23, 30);
+    expect(iso(addDays(lateNight, 1))).toBe("2027-03-14");
+    expect(iso(addDays(lateNight, -1))).toBe("2027-03-12");
+    expect(defaultSprints(lateNight).find((sp) => sp.name === "v0.23")!.release).toBe("2027-03-27");
+  });
+
+  it("formats a stored timestamp as the local date and time", () => {
+    expect(localStamp(evening.toISOString())).toBe("2026-10-20 23:30");
+  });
+
+  it("dates exports and their filenames by the local day", () => {
+    expect(stamp(evening)).toBe("2026-10-20");
+    expect(decisionsToMarkdown(freshStore(), evening)).toContain("— 2026-10-20 (");
+    expect(projectsToMarkdown(freshStore(), evening)).toContain("— 2026-10-20");
   });
 });
