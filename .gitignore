@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+
+# The live register is your data, not the project's. A fresh clone starts from
+# src/seed.ts instead, so nothing here is needed to run the app. Kept out of
+# history too — the commits that carried it were purged before the first push.
+data/
