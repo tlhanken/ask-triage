@@ -3,9 +3,10 @@ import { HISTORY_CAP } from "./store";
 
 /** Data & history: the version layer.
  *
- *  In-app history is fast and lives in this browser. The file on disk is what
- *  git can see and revert. They are complements, not duplicates: history is for
- *  "undo that", the file is for "go back to last Tuesday". */
+ *  Nothing here is committed, so the History tab is the only way back, and it
+ *  does both jobs: restore the state before one change ("undo that"), or jump to
+ *  any earlier state in the window ("go back to last Tuesday"). The snapshots
+ *  ride inside the store, so they travel with it wherever it is saved. */
 
 interface Props {
   store: Store;

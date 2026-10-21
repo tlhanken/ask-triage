@@ -244,11 +244,12 @@ export function defaultRevisit(now = new Date()): string {
 /**
  * The register as it is written to disk: indented, with a trailing newline.
  *
- * The file exists so git can diff and revert it. Written compact, every save is
- * a single 6KB line and every change reads as a whole-file rewrite, which throws
- * away the only reason for tracking it. Indented, a change to one ticket is a
- * change to a few lines. The trailing newline keeps it a well-formed text file
- * and stops "No newline at end of file" noise in diffs.
+ * Nothing diffs this file automatically — it is untracked, and the History tab is
+ * what reverts it. But it is the durable record, and it does get read and
+ * hand-compared against a saved copy. Written compact, every save is a single 6KB
+ * line: unreadable, and no two versions can be told apart by eye. Indented, a
+ * change to one ticket is a change to a few lines. The trailing newline keeps it
+ * a well-formed text file.
  */
 export function serialize(s: Store): string {
   return `${JSON.stringify(s, null, 2)}\n`;
@@ -354,7 +355,8 @@ export function shiftSprint(s: Store, name: string, delta: -1 | 1): Store {
 
 // ---------------------------------------------------------------- history
 
-/** Kept small on purpose: snapshots live in localStorage, which is not large. */
+/** Kept small on purpose: snapshots ride along inside the store, which is written
+ *  to localStorage as well as to the file, and localStorage is not large. */
 export const HISTORY_CAP = 25;
 
 const capture = (s: Store): string => JSON.stringify({ tickets: s.tickets, settings: s.settings });

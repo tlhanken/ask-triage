@@ -65,9 +65,9 @@ reverts to.
 
 ## Not done yet
 
-- History is over 80% of the register file, stored as escaped JSON blobs. Splitting
-  it into its own file would make the register small, cheap to write, and actually
-  diffable.
+- History is over 80% of the register file, stored as escaped JSON blobs — so the
+  file is 190KB and every save rewrites all of it. Splitting it into its own file
+  would make the register small and cheap to write.
 - The project view's switcher is still one chip per project; the picker used in the
   ticket form would scale better.
 - The triage capacity meter counts decisions, while capacity everywhere else counts

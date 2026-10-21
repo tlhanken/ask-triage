@@ -68,7 +68,7 @@ describe("the data endpoint", () => {
   let handler: (req: FakeReq, res: FakeRes, next: () => void) => void;
 
   beforeEach(async () => {
-    dir = await fs.mkdtemp(nodePath.join(os.tmpdir(), "revel-data-"));
+    dir = await fs.mkdtemp(nodePath.join(os.tmpdir(), "ask-triage-data-"));
     file = nodePath.join(dir, "register.json");
     const plugin = localDataFile(file);
     plugin.configureServer({ middlewares: { use(fn: unknown) { handler = fn as typeof handler; } } });
