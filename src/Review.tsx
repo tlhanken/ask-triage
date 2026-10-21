@@ -98,7 +98,7 @@ export default function Review({ store, onEdit }: Props) {
 
             {row.ticket.externalUrl && (
               <p className="small dim">
-                partner ticket:{" "}
+                external ticket:{" "}
                 <a href={row.ticket.externalUrl} target="_blank" rel="noreferrer">
                   {externalLabel(row.ticket.externalUrl)}
                 </a>

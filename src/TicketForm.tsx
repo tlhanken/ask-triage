@@ -188,7 +188,7 @@ export default function TicketForm({
         </div>
 
         <details className="tier">
-          <summary>Optional fields <span className="dim small">type, stakeholders, notes — never required</span></summary>
+          <summary>Optional fields <span className="dim small">priority, type, stakeholders, notes — never required</span></summary>
           <div className="form">
             <label>Priority
               <select value={d.priority}

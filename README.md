@@ -68,9 +68,10 @@ reverts to.
 
 ## Not done yet
 
-- History is over 80% of the register file, stored as escaped JSON blobs — so the
-  file is 190KB and every save rewrites all of it. Splitting it into its own file
-  would make the register small and cheap to write.
+- History is over 80% of the register file, stored as escaped JSON blobs, so the
+  file is 190KB and every save rewrites all of it. The fix is proposed in
+  `openspec/changes/shrink-register-history`: record each change as a delta
+  instead of a full copy, so history shrinks without becoming a second file.
 - The project view's switcher is still one chip per project; the picker used in the
   ticket form would scale better.
 - The triage capacity meter counts decisions, while capacity everywhere else counts

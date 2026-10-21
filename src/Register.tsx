@@ -47,7 +47,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
   return (
     <div>
       <div className="toolbar">
-        <input placeholder="filter name, summary, project, owner, stakeholder, ticket…" value={q}
+        <input placeholder="filter name, summary, project, notes, stakeholder, ticket…" value={q}
                onChange={(e) => setQ(e.target.value)} style={{ minWidth: 300 }} />
         <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
           <option value="">all states</option>
