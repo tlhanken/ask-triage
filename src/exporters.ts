@@ -1,15 +1,13 @@
-import { type DerivedTicket, type ProjectId, derive, externalLabel, isOpen } from "./schema";
+import { type DerivedTicket, type ProjectId, derive, externalLabel, iso, isOpen } from "./schema";
 import type { Decision, Store } from "./store";
 
 /** Export paths: a markdown summary for updating people, plus CSV/JSON. */
-
-const fmtDate = (isoTs: string): string => isoTs.slice(0, 10);
 
 export function decisionsToMarkdown(s: Store, now = new Date()): string {
   const d: Decision[] = s.decisions;
   const by = (a: string) => d.filter((x) => x.action === a);
   const L: string[] = [];
-  L.push(`# Priority tracker — ${fmtDate(now.toISOString())} (${s.settings.currentSprint})`);
+  L.push(`# Priority tracker — ${iso(now)} (${s.settings.currentSprint})`);
   L.push("");
   L.push(`${d.length} decisions · ${by("Accept").length} accepted · ${by("Defer").length} deferred · ` +
          `${by("Decline").length} declined · ${by("Block").length} blocked`);
@@ -35,7 +33,7 @@ export function decisionsToMarkdown(s: Store, now = new Date()): string {
 /** The project view, as text — one section per project, open tickets only. */
 export function projectsToMarkdown(s: Store, now = new Date()): string {
   const projects = [...new Set(s.tickets.flatMap((t) => t.projects))].sort() as ProjectId[];
-  const L: string[] = [`# Tickets by project — ${fmtDate(now.toISOString())}`, ""];
+  const L: string[] = [`# Tickets by project — ${iso(now)}`, ""];
   for (const p of projects) {
     const rows = s.tickets
       .filter((t) => t.projects.includes(p) && isOpen(t))
@@ -109,4 +107,5 @@ export function download(filename: string, text: string, mime = "text/plain"): v
   URL.revokeObjectURL(url);
 }
 
-export const stamp = (now = new Date()): string => now.toISOString().slice(0, 10);
+/** The local day, for filenames — an evening export is dated today, not tomorrow. */
+export const stamp = (now = new Date()): string => iso(now);

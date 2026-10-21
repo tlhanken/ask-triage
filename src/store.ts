@@ -393,18 +393,22 @@ export function withHistory(
 }
 
 /**
- * Tickets that were placed into a release AFTER its freeze date. Derived from
- * the recorded moves rather than from a field on the ticket — which keeps the
- * ticket lean, and the history window is exactly the one that matters here.
+ * Tickets that were placed into a release on or after its freeze date. Derived
+ * from the recorded moves rather than from a field on the ticket — which keeps
+ * the ticket lean, and the history window is exactly the one that matters here.
+ *
+ * A release is frozen ON its freeze day, so a move that day counts. The move's
+ * timestamp is stored in UTC and compared as a LOCAL date, like the freeze date.
  */
 export function slippedIn(s: Store, sprint: string, now = new Date()): Snapshot[] {
   const sp = findSprint(s.settings, sprint);
   if (!sp || sp.freeze === null || !isFrozen(sp, now)) return [];
+  const freeze = sp.freeze;
   return s.history.filter(
     (h) =>
       h.op?.kind === "move" &&
       h.op.sprint === sprint &&
-      h.at.slice(0, 10) > sp.freeze!,
+      iso(new Date(h.at)) >= freeze,
   );
 }
 

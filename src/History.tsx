@@ -1,5 +1,6 @@
 import type { Store } from "./store";
 import { HISTORY_CAP } from "./store";
+import { localStamp } from "./schema";
 
 /** Data & history: the version layer.
  *
@@ -61,7 +62,7 @@ export default function History({
         <ul className="log">
           {items.map((s) => (
             <li key={s.index}>
-              <span className="when mono small">{s.at.replace("T", " ").slice(0, 16)}</span>
+              <span className="when mono small">{localStamp(s.at)}</span>
               <span className="what">
                 <b>{s.label}</b>
               </span>

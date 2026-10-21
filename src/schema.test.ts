@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
   audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, hasShipped,
-  inSprint, isFrozen, loadUnits, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
+  inSprint, isFrozen, loadUnits, localStamp, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
   queueHealth,
   REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
 } from "./schema";
@@ -13,7 +13,7 @@ import {
   revertTo, resetToSeed, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
   undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
-import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
+import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, stamp, toJson } from "./exporters";
 
 /** A due date N days from the real clock, since derive() defaults to now. */
 const isoFromNow = (days: number): string => {
@@ -842,5 +842,39 @@ describe("release dates and feature freeze", () => {
     const a = withHistory(s, "move 3 to v0.24", (cur) => moveTicketToSprint(cur, 3, "v0.24", NOW), NOW);
     expect(a.history[0].op).toBeUndefined();
     expect(slippedIn(a, "v0.24", NOW)).toHaveLength(0);
+  });
+
+  // The suite runs in a negative-offset timezone (see vite.config.ts), so an
+  // evening timestamp is already the next day in UTC.
+  const frozenOn = (freeze: string) =>
+    updateSprint(freshStore(), "v0.23", { freeze, release: "2026-12-01" });
+  const moveAt = (s: ReturnType<typeof freshStore>, at: Date) =>
+    withHistory(s, "move 2 to v0.23", (cur) => moveTicketToSprint(cur, 2, "v0.23", at), at,
+      { kind: "move", ticketId: 2, sprint: "v0.23" });
+
+  it("counts a move made on the freeze day itself, since the release is frozen that day", () => {
+    const s = moveAt(frozenOn("2026-10-10"), new Date(2026, 9, 10, 9, 0));
+    expect(slippedIn(s, "v0.23", NOW)).toHaveLength(1);
+  });
+
+  it("judges a move by its local date, not its UTC one", () => {
+    // 23:30 local on the 9th is already the 10th in UTC.
+    const s = moveAt(frozenOn("2026-10-10"), new Date(2026, 9, 9, 23, 30));
+    expect(new Date(2026, 9, 9, 23, 30).toISOString().slice(0, 10)).toBe("2026-10-10");
+    expect(slippedIn(s, "v0.23", NOW)).toHaveLength(0);
+  });
+});
+
+describe("timestamps are shown in local time", () => {
+  const evening = new Date(2026, 9, 20, 23, 30);       // already the 21st in UTC
+
+  it("formats a stored timestamp as the local date and time", () => {
+    expect(localStamp(evening.toISOString())).toBe("2026-10-20 23:30");
+  });
+
+  it("dates exports and their filenames by the local day", () => {
+    expect(stamp(evening)).toBe("2026-10-20");
+    expect(decisionsToMarkdown(freshStore(), evening)).toContain("— 2026-10-20 (");
+    expect(projectsToMarkdown(freshStore(), evening)).toContain("— 2026-10-20");
   });
 });

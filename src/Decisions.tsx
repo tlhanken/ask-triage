@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Store } from "./store";
+import { localStamp } from "./schema";
 import {
   copyText, decisionsToMarkdown, download, projectsToMarkdown, registerToCsv, stamp, toJson,
 } from "./exporters";
@@ -41,7 +42,7 @@ export default function DecisionLog({ store }: { store: Store }) {
           <ul className="log">
             {items.map((d) => (
               <li key={d.id}>
-                <span className="when mono small">{d.at.replace("T", " ").slice(0, 16)}</span>
+                <span className="when mono small">{localStamp(d.at)}</span>
                 <span className="what">
                   <span className={"tag " + d.action} style={{ marginRight: 8 }}>{d.action}</span>
                   <b>{d.ticketLabel}</b> <span className="dim">[{d.projects.join(", ")}]</span>

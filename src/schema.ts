@@ -217,6 +217,16 @@ const pad = (n: number) => String(n).padStart(2, "0");
 /** Local-date ISO (yyyy-mm-dd) — avoids the UTC off-by-one on evening edits. */
 export const iso = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+/**
+ * A stored timestamp (UTC ISO, which is right for storage) as the LOCAL date and
+ * time a person reads. Slicing the stored string instead shows UTC, which in the
+ * evening west of Greenwich is already tomorrow.
+ */
+export function localStamp(at: string): string {
+  const d = new Date(at);
+  return `${iso(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Parse an ISO date as a LOCAL date, not UTC midnight. */
 export function parseDate(s: string): Date {
   const [y, m, d] = s.split("-").map(Number);

@@ -12,5 +12,11 @@ import { localDataFile } from "./src/server/localData";
  */
 export default defineConfig({
   plugins: [react(), localDataFile()],
-  test: { environment: "node", include: ["src/**/*.test.ts", "src/**/*.test.tsx"] },
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Pinned to a negative UTC offset, where an evening timestamp is already the
+    // next day in UTC. CI runs in UTC, which hides that whole class of bug.
+    env: { TZ: "America/Los_Angeles" },
+  },
 });
