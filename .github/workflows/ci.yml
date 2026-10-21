@@ -1,7 +1,8 @@
 name: CI
 
 # The typecheck runs before the build even though `npm run build` already runs
-# `tsc --noEmit`: it is the cheapest step, so it fails first and fastest.
+# `tsc --noEmit`: it is the cheapest step, so it fails first and fastest. Lint
+# comes next for the same reason.
 on: [push, pull_request]
 
 concurrency:
@@ -19,5 +20,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run lint
       - run: npm test
       - run: npm run build

@@ -12,6 +12,7 @@ what happens to them week by week. No backend: a React app over a JSON file.
     npm run preview    # same, over a production build
     npm test           # vitest
     npm run typecheck  # tsc --noEmit
+    npm run lint       # eslint, correctness rules only — it does not format
     npm run build      # typecheck, then vite build into dist/
 
 Open the URL it prints. **Use `dev` or `preview`.** Without one of those there is no
