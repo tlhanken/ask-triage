@@ -40,7 +40,12 @@ describe("decideWrite", () => {
 
 class FakeReq {
   private handlers: Record<string, ((chunk?: unknown) => void)[]> = {};
-  constructor(public url: string, public method: string, private body = "") {}
+  constructor(
+    public url: string,
+    public method: string,
+    private body = "",
+    public headers: Record<string, string> = { "content-type": "application/json", host: "localhost:5173" },
+  ) {}
   on(event: string, cb: (chunk?: unknown) => void) {
     (this.handlers[event] ??= []).push(cb);
     return this;
@@ -76,9 +81,9 @@ describe("the data endpoint", () => {
 
   afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 
-  const post = async (body: string) => {
+  const post = async (body: string, headers?: Record<string, string>) => {
     const res = new FakeRes();
-    const req = new FakeReq("/__data", "POST", body);
+    const req = new FakeReq("/__data", "POST", body, headers);
     handler(req, res, () => { throw new Error("should not fall through"); });
     req.send();
     await settle();
@@ -116,5 +121,38 @@ describe("the data endpoint", () => {
     let passed = false;
     handler(new FakeReq("/index.html", "GET"), new FakeRes(), () => { passed = true; });
     expect(passed).toBe(true);
+    passed = false;
+    handler(new FakeReq("/__database", "GET"), new FakeRes(), () => { passed = true; });
+    expect(passed).toBe(true);                                // a prefix is not the endpoint
+  });
+
+  it("leaves no temporary file behind after a write", async () => {
+    await post(register(3));
+    await post(register(4));
+    expect(await fs.readdir(dir)).toEqual(["register.json"]);
+    expect(JSON.parse(await fs.readFile(file, "utf8")).tickets).toHaveLength(4);
+  });
+
+  // A page on any other site can send a "simple" cross-origin POST with no
+  // preflight — a form or a text/plain fetch. Neither may reach the file.
+  it("refuses a write that is not sent as JSON, and leaves the file alone", async () => {
+    await post(register(14));
+    const res = await post(register(1), { "content-type": "text/plain", host: "localhost:5173" });
+    expect(res.statusCode).toBe(415);
+    expect(JSON.parse(await fs.readFile(file, "utf8")).tickets).toHaveLength(14);
+  });
+
+  it("refuses a write from another origin, and allows one from its own", async () => {
+    await post(register(14));
+    const foreign = await post(register(1), {
+      "content-type": "application/json", host: "localhost:5173", origin: "https://evil.example",
+    });
+    expect(foreign.statusCode).toBe(403);
+    expect(JSON.parse(await fs.readFile(file, "utf8")).tickets).toHaveLength(14);
+
+    const own = await post(register(2), {
+      "content-type": "application/json", host: "100.64.0.1:5173", origin: "http://100.64.0.1:5173",
+    });
+    expect(own.statusCode).toBe(200);
   });
 });
