@@ -3,7 +3,7 @@ import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
   deleteTicket,
-  fillReleaseDates, load, migrateStore, moveTicketToSprint, recordDecision, removeProject,
+  fillReleaseDates, load, moveTicketToSprint, readStore, recordDecision, removeProject,
   removeSprint, resetToSeed,
   revertTo, save,
   serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
@@ -53,18 +53,14 @@ export default function App() {
       setStatus("writing to data/register.json");
       const raw = await loadFromEndpoint();
       if (cancelled || !raw) return;
-      try {
-        const parsed = JSON.parse(raw) as Store;
-        if (!Array.isArray(parsed?.tickets) || parsed.tickets.length === 0) return;
-        setStore((cur) =>
-          cur.history.length === 0 && cur.decisions.length === 0
-            ? migrateStore(parsed)
-            : cur,
-        );
-        setStatus("loaded from data/register.json");
-      } catch {
-        /* keep whatever we have */
-      }
+      // An empty register is never adopted: fresh state always carries the seed,
+      // so an empty file can only be an accident.
+      const fromFile = readStore(raw);
+      if (!fromFile || fromFile.tickets.length === 0) return;
+      setStore((cur) =>
+        cur.history.length === 0 && cur.decisions.length === 0 ? fromFile : cur,
+      );
+      setStatus("loaded from data/register.json");
     })();
     return () => { cancelled = true; };
   }, []);
@@ -93,14 +89,10 @@ export default function App() {
   const loadFromFile = async () => {
     const raw = (await loadFromEndpoint()) ?? (await loadFromPicker());
     if (!raw) { setStatus("no file loaded"); return; }
-    try {
-      const parsed = JSON.parse(raw) as Store;
-      if (!Array.isArray(parsed?.tickets)) { setStatus("that is not a register for this app"); return; }
-      act("load from file", () => migrateStore(parsed));
-      setStatus("loaded from file");
-    } catch {
-      setStatus("could not read that file");
-    }
+    const loaded = readStore(raw);
+    if (!loaded) { setStatus("that is not a register this version can read"); return; }
+    act("load from file", () => loaded);
+    setStatus("loaded from file");
   };
 
   return (

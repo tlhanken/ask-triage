@@ -223,13 +223,26 @@ export function migrateStore(parsed: unknown): Store {
   };
 }
 
+/**
+ * Parse, validate and migrate a stored register — the ONE way in, used by every
+ * load path (browser storage, the file endpoint, a file the user picks). A path
+ * that skips any of the three is how one copy arrives badly typed while another
+ * arrives fine. Returns null for anything that is not a register this version can
+ * read, so it is refused whole rather than loaded in part.
+ */
+export function readStore(raw: string): Store | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return looksValid(parsed) ? migrateStore(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function load(): Store {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return freshStore();
-    const parsed: unknown = JSON.parse(raw);
-    if (!looksValid(parsed)) return freshStore();
-    return migrateStore(parsed);
+    return (raw && readStore(raw)) || freshStore();
   } catch {
     return freshStore();
   }

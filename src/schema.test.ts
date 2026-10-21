@@ -9,7 +9,7 @@ import {
 import {
   HISTORY_CAP, addProject, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit,
   deleteTicket, explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, projectUsage,
-  recordDecision, removeProject, removeSprint,
+  recordDecision, readStore, removeProject, removeSprint,
   revertTo, resetToSeed, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
   undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
@@ -489,6 +489,31 @@ describe("the file on disk", () => {
     const back = JSON.parse(serialize(s));
     expect(back.tickets).toEqual(s.tickets);
     expect(back.settings).toEqual(s.settings);
+  });
+});
+
+describe("one way in for every load path", () => {
+  it("reads a saved register back", () => {
+    const s = freshStore();
+    const back = readStore(serialize(s))!;
+    expect(back.tickets).toEqual(s.tickets);
+    expect(back.settings).toEqual(s.settings);
+  });
+
+  it("migrates an old shape on the way in", () => {
+    const s = freshStore();
+    const legacy = { ...s, tickets: [{ ...s.tickets[0], priority: undefined, type: "Critical" }] };
+    const back = readStore(JSON.stringify(legacy))!;
+    expect(back.tickets[0].priority).toBe("Critical");
+    expect(back.tickets[0].type).toBeNull();
+  });
+
+  it("refuses what is not a register, rather than half-loading it", () => {
+    const s = freshStore();
+    expect(readStore("not json")).toBeNull();
+    expect(readStore(JSON.stringify({ tickets: [] }))).toBeNull();               // no settings
+    expect(readStore(JSON.stringify({ ...s, version: 2 }))).toBeNull();          // unknown version
+    expect(readStore(JSON.stringify({ ...s, tickets: [{ id: "x" }] }))).toBeNull();
   });
 });
 
