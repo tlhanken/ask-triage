@@ -5,27 +5,75 @@
 Tracks the software asks owed by the team and by the partner company, and decides
 what happens to them week by week. No backend: a React app over a JSON file.
 
-## Run it
+## Getting started
 
+You need Node.js 22 (CI runs on 22) and npm.
+
+    git clone https://github.com/tlhanken/ask-triage.git
+    cd ask-triage
     npm install
-    npm run dev        # dev server — the file endpoint is active, so saves reach disk
-    npm run preview    # same, over a production build
+    npm run dev
+
+Open http://localhost:5173. A fresh clone starts from demo data. Opening the app
+creates `data/register.json`, and every change is saved to it from then on.
+Stop the server with Ctrl-C. Your data stays in that file.
+
+**Use `dev` or `preview`.** Without one of those there is no server, so nothing
+can be written to the register file and the app falls back to browser storage
+only. The History tab's status line says which one is in use.
+
+## Configuration
+
+The defaults need no configuration. To change them, copy the example and edit
+the copy:
+
+    cp .env.example .env.local
+
+`.env.example` is tracked and documents every setting. `.env.local` is
+gitignored, so your settings stay on your machine. Restart the server after
+editing it. Every setting is optional:
+
+    ASK_TRIAGE_DATA_FILE   Where the register is saved. Relative paths are from
+                           the repo root; `~` is not expanded, so use an absolute
+                           path to leave the repo. Default: data/register.json
+    ASK_TRIAGE_HOST        Which address to listen on. 0.0.0.0 listens on every
+                           interface, e.g. to reach it over Tailscale.
+                           Default: localhost only
+    ASK_TRIAGE_PORT        Which port, for both dev and preview. If the port is
+                           busy, the server refuses to start rather than picking
+                           another. Default: 5173 for dev, 4173 for preview
+
+A variable set in the shell wins over the file, for a one-off:
+
+    ASK_TRIAGE_PORT=8080 npm run dev
+
+**`ASK_TRIAGE_HOST=0.0.0.0` has no login.** Anyone who can reach the port can
+read and edit the register. Only expose it on a network you trust, such as a
+tailnet.
+
+The planning settings (release capacity, sprint length, scoring weights) are not
+in this file. They are stored inside the register itself, so they travel with
+your data. Releases and projects are edited in the app. Capacity, sprint length
+and weights have no editor yet; a new register takes them from
+`DEFAULT_SETTINGS` in `src/schema.ts`.
+
+## Commands
+
+    npm run dev        # dev server; the file endpoint is active, so saves reach disk
+    npm run preview    # the same, over a production build (run `npm run build` first)
     npm test           # vitest
     npm run typecheck  # tsc --noEmit
-    npm run lint       # eslint, correctness rules only — it does not format
+    npm run lint       # eslint, correctness rules only; it does not format
     npm run build      # typecheck, then vite build into dist/
-
-Open the URL it prints. **Use `dev` or `preview`.** Without one of those there is no
-server, so nothing can be written to `data/register.json` and the app falls back to
-browser storage only. The History tab's status line says which one is in use.
 
 ## Where the data lives
 
 Two layers, deliberately:
 
-    data/register.json    The durable record, written indented. Gitignored — the
+    data/register.json    The durable record, written indented. Gitignored: the
                           repo never carries real asks, and a fresh clone starts
-                          from the seed in `src/seed.ts` instead.
+                          from the seed in `src/seed.ts` instead. Its location
+                          is configurable (ASK_TRIAGE_DATA_FILE).
     localStorage          The instant layer, invisible to git, keyed
                           `revel-priority-tracker-v1`. Do NOT rename that key: it
                           identifies existing saves, and renaming it orphans them.
