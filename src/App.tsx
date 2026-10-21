@@ -9,8 +9,9 @@ import {
   serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
-  downloadJson, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
+  fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
 } from "./persist";
+import { download } from "./exporters";
 import Triage from "./Triage";
 import Sprints from "./Sprints";
 import Projects from "./Projects";
@@ -21,7 +22,11 @@ import TicketForm from "./TicketForm";
 import SprintForm from "./SprintForm";
 import Review from "./Review";
 
-type Tab = "triage" | "review" | "sprints" | "projects" | "register" | "decisions" | "history";
+const TABS = [
+  ["triage", "Triage"], ["review", "Review"], ["sprints", "Sprints"], ["projects", "Projects"],
+  ["register", "Register"], ["decisions", "Decisions"], ["history", "History"],
+] as const;
+type Tab = (typeof TABS)[number][0];
 
 export default function App() {
   const [store, setStore] = useState<Store>(() => load());
@@ -100,13 +105,9 @@ export default function App() {
       <header className="top">
         <h1>Priority tracker</h1>
         <nav className="tabs">
-          <button className={tab === "triage" ? "on" : ""} onClick={() => setTab("triage")}>Triage</button>
-          <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>Review</button>
-          <button className={tab === "sprints" ? "on" : ""} onClick={() => setTab("sprints")}>Sprints</button>
-          <button className={tab === "projects" ? "on" : ""} onClick={() => setTab("projects")}>Projects</button>
-          <button className={tab === "register" ? "on" : ""} onClick={() => setTab("register")}>Register</button>
-          <button className={tab === "decisions" ? "on" : ""} onClick={() => setTab("decisions")}>Decisions</button>
-          <button className={tab === "history" ? "on" : ""} onClick={() => setTab("history")}>History</button>
+          {TABS.map(([id, name]) => (
+            <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{name}</button>
+          ))}
         </nav>
         <div className="spacer" />
         <div className="dim small">
@@ -154,7 +155,7 @@ export default function App() {
                 setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
             }}
             onLoadFile={loadFromFile}
-            onDownload={() => downloadJson("register.json", serialize(store))}
+            onDownload={() => download("register.json", serialize(store), "application/json")}
             onReset={reset}
             fileMode={fileMode}
             status={status}
