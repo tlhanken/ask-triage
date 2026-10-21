@@ -1,5 +1,7 @@
 # Priority tracker
 
+[![CI](https://github.com/tlhanken/ask-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/tlhanken/ask-triage/actions/workflows/ci.yml)
+
 Tracks the software asks owed by the team and by the partner company, and decides
 what happens to them week by week. No backend: a React app over a JSON file.
 
@@ -72,3 +74,7 @@ reverts to.
   ticket form would scale better.
 - The triage capacity meter counts decisions, while capacity everywhere else counts
   work units.
+
+## License
+
+MIT — see `LICENSE`.
