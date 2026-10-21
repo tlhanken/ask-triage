@@ -72,10 +72,13 @@ reverts to.
   file is 190KB and every save rewrites all of it. The fix is proposed in
   `openspec/changes/shrink-register-history`: record each change as a delta
   instead of a full copy, so history shrinks without becoming a second file.
-- The project view's switcher is still one chip per project; the picker used in the
-  ticket form would scale better.
-- The triage capacity meter counts decisions, while capacity everywhere else counts
-  work units.
+- The project view's switcher is still one chip per project, and projects cannot be
+  renamed. See `openspec/changes/projects-page`.
+- Nothing ever reaches Done, Blocked has no way back, and the triage capacity
+  meter counts decisions while capacity everywhere else counts work units. The
+  fix is one planning workflow: see `openspec/changes/plan-workflow`.
+- A second tab or machine can silently overwrite the register file. See
+  `openspec/changes/file-is-source-of-truth`.
 
 ## License
 
