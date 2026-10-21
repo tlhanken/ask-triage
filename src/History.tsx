@@ -41,7 +41,7 @@ export default function History({
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="dim small">
           {fileMode
-            ? "A local file endpoint is available, so this data is also written to data/register.json. That file is untracked, so it is the only copy: download a JSON copy to keep a backup."
+            ? "A local file endpoint is available, so this data is also written to the register file (data/register.json unless ASK_TRIAGE_DATA_FILE says otherwise). That file is untracked, so it is the only copy: download a JSON copy to keep a backup."
             : "No file endpoint here (static build), so this data lives in this browser and in whatever you download or save yourself."}
         </div>
       </div>

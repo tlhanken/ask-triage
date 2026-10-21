@@ -52,10 +52,10 @@ export default function App() {
       if (cancelled) return;
       setFileMode(available);
       if (!available) {
-        setStatus("this browser only — no file endpoint, so nothing is written to data/register.json");
+        setStatus("this browser only — no file endpoint, so nothing is written to disk");
         return;
       }
-      setStatus("writing to data/register.json");
+      setStatus("writing to the register file");
       const raw = await loadFromEndpoint();
       if (cancelled || !raw) return;
       // An empty register is never adopted: fresh state always carries the seed,
@@ -65,7 +65,7 @@ export default function App() {
       setStore((cur) =>
         cur.history.length === 0 && cur.decisions.length === 0 ? fromFile : cur,
       );
-      setStatus("loaded from data/register.json");
+      setStatus("loaded from the register file");
     })();
     return () => { cancelled = true; };
   }, []);

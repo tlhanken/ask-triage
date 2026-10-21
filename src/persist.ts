@@ -61,7 +61,12 @@ export async function saveToFile(json: string): Promise<SaveResult> {
       headers: { "content-type": "application/json" },
       body: json,
     });
-    if (r.ok) return { where: "file", message: "saved to data/register.json" };
+    if (r.ok) {
+      // The server says where it wrote: the path is configurable (ASK_TRIAGE_DATA_FILE).
+      let file = "the register file";
+      try { file = ((await r.json()) as { file?: string }).file ?? file; } catch { /* keep the generic name */ }
+      return { where: "file", message: `saved to ${file}` };
+    }
 
     // The endpoint answered and said no. Do NOT fall through to the picker: the
     // server is there, the write was rejected, and pretending otherwise is how a
