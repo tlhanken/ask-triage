@@ -170,12 +170,20 @@ describe("editing in the browser (store CRUD)", () => {
     expect(t.lastTouched).toBe("2026-10-18");
   });
 
-  it("deletes a ticket and the decisions that referenced it", () => {
+  it("deletes a ticket but keeps its decisions, which are an append-only record", () => {
     const s = recordDecision(freshStore(), 2, "Defer", "later", null, NOW);
     expect(s.decisions).toHaveLength(1);
     const s1 = deleteTicket(s, 2);
     expect(s1.tickets.some((t) => t.id === 2)).toBe(false);
-    expect(s1.decisions).toHaveLength(0);
+    expect(s1.decisions).toEqual(s.decisions);
+  });
+
+  it("a deferred ticket that is deleted and restored still comes back on its revisit day", () => {
+    const s = recordDecision(freshStore(), 2, "Defer", "later", "2026-11-02", NOW);
+    const s1 = withHistory(s, "delete 2", (cur) => deleteTicket(cur, 2), NOW);
+    const s2 = revertTo(s1, 0, NOW);
+    expect(revisitFor(s2, 2)).toBe("2026-11-02");
+    expect(revisitDue(s2, new Date(2026, 10, 2)).map((x) => x.ticket.id)).toContain(2);
   });
 
   it("does not mutate the array it was given", () => {

@@ -313,12 +313,14 @@ export function updateTicket(s: Store, id: number, patch: Partial<Ticket>, now =
   };
 }
 
+/**
+ * Remove a ticket. Its decisions stay: the decision log is an append-only record
+ * of what was decided at the time, and it is also where a deferral's revisit
+ * date lives — so dropping them would leave a deleted-then-restored ticket that
+ * never comes back from its deferral.
+ */
 export function deleteTicket(s: Store, id: number): Store {
-  return {
-    ...s,
-    tickets: s.tickets.filter((t) => t.id !== id),
-    decisions: s.decisions.filter((d) => d.ticketId !== id),
-  };
+  return { ...s, tickets: s.tickets.filter((t) => t.id !== id) };
 }
 
 // ---------------------------------------------------------------- sprints
