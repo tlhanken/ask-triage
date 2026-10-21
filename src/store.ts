@@ -98,6 +98,21 @@ export function freshStore(): Store {
   };
 }
 
+/**
+ * Replace the register with the demo data, as a recordable change.
+ *
+ * The register file is untracked, so this must never be a dead end: it keeps the
+ * history (the caller records it, so it can be reverted like any other change),
+ * keeps the decision log, which is append-only, and gives the demo tickets fresh
+ * ids so no id is ever reused and no old decision attaches to a demo ticket.
+ */
+export function resetToSeed(s: Store): Store {
+  const seed = freshStore();
+  const start = s.nextTicketId;
+  const tickets = seed.tickets.map((t, i) => ({ ...t, id: start + i }));
+  return { ...s, tickets, settings: seed.settings, nextTicketId: start + tickets.length };
+}
+
 /** Validate the parsed shape; anything unrecognised falls back to seed. */
 function looksValid(s: unknown): s is Store {
   const v = s as Store;
@@ -225,14 +240,6 @@ export function save(s: Store): void {
     localStorage.setItem(KEY, JSON.stringify(s));
   } catch {
     /* private mode / quota — state stays in memory */
-  }
-}
-
-export function clear(): void {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    /* ignore */
   }
 }
 

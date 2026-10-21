@@ -14,12 +14,13 @@ interface Props {
   onSaveFile: () => void;
   onLoadFile: () => void;
   onDownload: () => void;
+  onReset: () => void;
   fileMode: boolean;
   status: string;
 }
 
 export default function History({
-  store, onRevert, onSaveFile, onLoadFile, onDownload, fileMode, status,
+  store, onRevert, onSaveFile, onLoadFile, onDownload, onReset, fileMode, status,
 }: Props) {
   const items = store.history.map((s, i) => ({ ...s, index: i })).reverse();
 
@@ -31,6 +32,9 @@ export default function History({
         <button onClick={onDownload}>Download JSON</button>
         <div className="spacer" />
         <span className="dim small">{status}</span>
+        <button className="dim" onClick={onReset} title="Replace the register with the demo data — revertible">
+          Reset to demo data
+        </button>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

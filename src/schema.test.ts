@@ -10,7 +10,7 @@ import {
   HISTORY_CAP, addProject, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit,
   deleteTicket, explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, projectUsage,
   recordDecision, removeProject, removeSprint,
-  revertTo, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
+  revertTo, resetToSeed, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
   undecided, undoLast, updateSprint, updateTicket, withHistory,
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, toJson } from "./exporters";
@@ -332,6 +332,24 @@ describe("history and revert", () => {
     const s2 = revertTo(s1, 0, NOW);
     expect(s2.tickets.some((t) => t.id === 1)).toBe(true);
     expect(s2.nextTicketId).toBe(nextId);
+  });
+
+  it("a reset to demo data is recorded, and reverting it brings the register back", () => {
+    const s = createTicket(freshStore(), { ...blankTicket(), name: "real work" });
+    const s1 = withHistory(s, "reset to demo data", resetToSeed, NOW);
+    expect(s1.history).toHaveLength(1);
+    expect(s1.tickets.some((t) => t.name === "real work")).toBe(false);
+    expect(revertTo(s1, 0, NOW).tickets.some((t) => t.name === "real work")).toBe(true);
+  });
+
+  it("a reset never reuses an id and keeps the decision log", () => {
+    let s = freshStore();
+    s = recordDecision(s, 1, "Defer", "later", "2026-11-02", NOW);
+    const before = s.nextTicketId;
+    const s1 = resetToSeed(s);
+    expect(Math.min(...s1.tickets.map((t) => t.id))).toBe(before);
+    expect(s1.nextTicketId).toBe(before + s1.tickets.length);
+    expect(s1.decisions).toEqual(s.decisions);
   });
 });
 

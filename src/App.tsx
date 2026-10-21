@@ -3,10 +3,10 @@ import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
   deleteTicket,
-  freshStore, fillReleaseDates, load, migrateStore, moveTicketToSprint, recordDecision, removeProject,
-  removeSprint,
+  fillReleaseDates, load, migrateStore, moveTicketToSprint, recordDecision, removeProject,
+  removeSprint, resetToSeed,
   revertTo, save,
-  serialize, clear, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
+  serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
   downloadJson, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
@@ -82,9 +82,11 @@ export default function App() {
     act(`${action.toLowerCase()} ${ticketId}`, (cur) => recordDecision(cur, ticketId, action, reason, revisit));
 
   const reset = () => {
-    if (window.confirm("Reset to seed data? This discards every ticket edit and decision.")) {
-      act("reset to seed data", () => freshStore());
-      clear();
+    if (window.confirm(
+      "Replace every ticket and release with the demo data? This is recorded, so it can be " +
+      "reverted from History. The decision log is kept.",
+    )) {
+      act("reset to demo data", resetToSeed);
     }
   };
 
@@ -119,7 +121,6 @@ export default function App() {
           {s.open} open · {s.total} tickets · queued {Math.round(s.avgWaitWeeks)}w · {s.accepted}/{s.target} this sprint
         </div>
         <button className="pick" onClick={() => setCreating(true)}>+ New ticket</button>
-        <button className="dim" onClick={reset} title="Reset to seed data">reset</button>
       </header>
 
       <main>
@@ -162,6 +163,7 @@ export default function App() {
             }}
             onLoadFile={loadFromFile}
             onDownload={() => downloadJson("register.json", serialize(store))}
+            onReset={reset}
             fileMode={fileMode}
             status={status}
           />
