@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, backlog,
-  audit, auditTicket, computeFlags, derive, externalLabel, fillState, findSprint, hasShipped,
+  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, addDays, backlog,
+  audit, auditTicket, computeFlags, defaultSprints, derive, externalLabel, fillState, findSprint, hasShipped, iso,
   inSprint, isFrozen, loadUnits, localStamp, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
   queueHealth,
   REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
@@ -892,6 +892,14 @@ describe("release dates and feature freeze", () => {
 
 describe("timestamps are shown in local time", () => {
   const evening = new Date(2026, 9, 20, 23, 30);       // already the 21st in UTC
+
+  it("adds calendar days, not 24-hour blocks, so a DST change cannot skip a date", () => {
+    // US clocks spring forward on 2027-03-14: 23:30 on the 13th + 24h is 00:30 on the 15th.
+    const lateNight = new Date(2027, 2, 14 - 1, 23, 30);
+    expect(iso(addDays(lateNight, 1))).toBe("2027-03-14");
+    expect(iso(addDays(lateNight, -1))).toBe("2027-03-12");
+    expect(defaultSprints(lateNight).find((sp) => sp.name === "v0.23")!.release).toBe("2027-03-27");
+  });
 
   it("formats a stored timestamp as the local date and time", () => {
     expect(localStamp(evening.toISOString())).toBe("2026-10-20 23:30");

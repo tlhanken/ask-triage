@@ -6,6 +6,7 @@ import {
   type Ticket,
   DEFAULT_SETTINGS,
   DEFAULT_PROJECTS,
+  addDays,
   DEFAULT_PRIORITY,
   CATEGORIES,
   PRIORITIES,
@@ -609,16 +610,14 @@ export function fillReleaseDates(s: Store, now = new Date()): Store {
     .sort(compareSprints);
   if (undated.length === 0) return s;
 
-  const DAY = 86_400_000;
-  const span = s.settings.sprintLengthDays * DAY;
   // Freeze a week before shipping, matching the default plan's lead. The lead
   // matters: freeze-on-today would hand back a release that is already frozen,
   // which is exactly the state this action exists to repair.
-  const lead = 7 * DAY;
+  const lead = 7;
   const dates: Record<string, { freeze: string; release: string }> = {};
   undated.forEach((name, i) => {
-    const release = new Date(now.getTime() + (i + 1) * span);
-    dates[name] = { freeze: iso(new Date(release.getTime() - lead)), release: iso(release) };
+    const releaseIn = (i + 1) * s.settings.sprintLengthDays;
+    dates[name] = { freeze: iso(addDays(now, releaseIn - lead)), release: iso(addDays(now, releaseIn)) };
   });
 
   return {

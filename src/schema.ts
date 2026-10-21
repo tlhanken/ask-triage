@@ -218,6 +218,14 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export const iso = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 /**
+ * The local day `n` calendar days from `d`, at midnight. Adding n × 24 hours
+ * instead skips or repeats a date when the span crosses a DST change late at
+ * night, so every "N days from now" goes through here.
+ */
+export const addDays = (d: Date, n: number): Date =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+
+/**
  * A stored timestamp (UTC ISO, which is right for storage) as the LOCAL date and
  * time a person reads. Slicing the stored string instead shows UTC, which in the
  * evening west of Greenwich is already tomorrow.
@@ -246,14 +254,9 @@ export function defaultSprints(now = new Date()): Sprint[] {
     ["v0.25", 42, 56], ["v0.24", 28, 42], ["v0.23", 5, 14], ["v0.22", -9, 0], ["v0.21", -23, -14],
   ];
   return plan.map(([name, freezeIn, releaseIn]) => ({
-    name, freeze: isoFrom(now, freezeIn), release: isoFrom(now, releaseIn),
+    name, freeze: iso(addDays(now, freezeIn)), release: iso(addDays(now, releaseIn)),
   }));
 }
-
-const isoFrom = (now: Date, inDays: number): string => {
-  const d = new Date(now.getTime() + inDays * MS_DAY);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 /** The release names in display order. Used by the tests; kept here as the accessor. */
 export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
