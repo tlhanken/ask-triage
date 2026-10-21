@@ -6,10 +6,11 @@ import nodePath from "node:path";
  * server; the client falls back to the File System Access API there.
  *
  * Deliberately a file, not a database — see openspec/ for the reasoning. That
- * file is git-tracked and the app rewrites it automatically on every change, so
- * one write that empties it destroys the record between commits. The guard below
- * exists for exactly that, and lives at the filesystem boundary rather than only
- * in the interface, because the interface is not the only thing that can POST.
+ * file is gitignored, and the app rewrites it automatically on every change, so
+ * one write that empties it destroys the record outright — there is no commit to
+ * fall back on. The guard below exists for exactly that, and lives at the
+ * filesystem boundary rather than only in the interface, because the interface
+ * is not the only thing that can POST.
  */
 
 export interface WriteDecision {

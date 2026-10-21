@@ -7,7 +7,7 @@ about them week by week.
 
 The unit is the ask, not the project: work is captured, ranked, triaged, assigned to
 releases, audited and reported from one register. It runs in a browser with no
-backend and keeps its state in a git-tracked JSON file.
+backend and keeps its state in a local JSON file.
 
 ## Requirements
 
@@ -193,10 +193,12 @@ The system SHALL derive flags from stored data without manual entry.
 
 Ticket data SHALL be stored on the user's machine and SHALL NOT require a
 database or a network service. When a development or preview server is present,
-the register SHALL additionally be written to a JSON file inside the repository so
-that it can be version-controlled by git. When no such server is present, the
-application SHALL offer a file-based alternative and a download. A save produced
-by an incompatible earlier model SHALL NOT be loaded partially.
+the register SHALL additionally be written to a JSON file on the user's machine
+outside version control, so that no real ask is ever committed. That file SHALL
+NOT be the only way to recover an earlier state: the application SHALL keep its
+own snapshots of the register and SHALL revert from them. When no such server is
+present, the application SHALL offer a file-based alternative and a download. A
+save produced by an incompatible earlier model SHALL NOT be loaded partially.
 
 #### Scenario: Both layers
 

@@ -20,8 +20,9 @@ browser storage only. The History tab's status line says which one is in use.
 
 Two layers, deliberately:
 
-    data/register.json    The durable record. Git-tracked, so `git diff` shows what
-                          changed and `git checkout` reverts it. Written indented.
+    data/register.json    The durable record, written indented. Gitignored — the
+                          repo never carries real asks, and a fresh clone starts
+                          from the seed in `src/seed.ts` instead.
     localStorage          The instant layer, invisible to git, keyed
                           `revel-priority-tracker-v1`. Do NOT rename that key: it
                           identifies existing saves, and renaming it orphans them.

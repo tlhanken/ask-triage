@@ -4,7 +4,8 @@
  * Two layers, deliberately:
  *   1. localStorage — instant, always available, invisible to git.
  *   2. a real JSON file on disk — written through a tiny dev/preview-server
- *      endpoint so git can diff and revert it. Falls back to the File System
+ *      endpoint. Gitignored, because it holds real asks: the register's own
+ *      snapshots are what revert it, not git. Falls back to the File System
  *      Access API (Chromium) when there is no server, and to nothing after that.
  *
  * No database. See openspec/changes for the reasoning.
