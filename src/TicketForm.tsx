@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  type ProjectId, type Ticket, CATEGORIES, ESTIMATES, PRIORITIES, estimateLabel, label, matchProjects,
-} from "./schema";
+import { type ProjectId, type Ticket, label, matchProjects } from "./schema";
+import { DueField, EstimateField, PriorityField, TypeField } from "./fields";
 
 /**
  * The browser editor, in three tiers.
  *
- * CORE is asked for, every time. OPTIONAL is one click away and never required.
- * BACKGROUND is set by the app or the triage loop and is shown read-only — the
- * only thing actionable there is recording a carryover, which is a thing that
- * happened, not a field to fill in.
+ * CORE is asked for, every time, and includes the four fields that make a ticket
+ * ready to schedule; each starts blank. OPTIONAL is one click away and never
+ * required. BACKGROUND is set by the app and shown read-only, with no actions:
+ * carry-overs are recorded by release close-out, not by hand.
  */
 
 interface Props {
@@ -175,36 +174,20 @@ export default function TicketForm({
                    placeholder="https://partner.atlassian.net/browse/PX-118" />
           </label>
 
-          <label>Due date
-            <input type="date" value={d.dueDate ?? ""} onChange={(e) => set("dueDate", e.target.value)} />
-          </label>
+          <DueField dueDate={d.dueDate} noHardDate={d.noHardDate}
+                    onChange={(v) => setD((cur) => ({ ...cur, ...v }))} />
 
-          <label>Estimated completion
-            <select value={d.estimate}
-                    onChange={(e) => set("estimate", Number(e.target.value) as Ticket["estimate"])}>
-              {ESTIMATES.map((n) => <option key={n} value={n}>{estimateLabel(n)}</option>)}
-            </select>
-          </label>
+          <EstimateField live label="Estimated completion (sprints)" value={d.estimate}
+                         onChange={(v) => set("estimate", v)} />
+
+          <PriorityField value={d.priority} onChange={(v) => set("priority", v)} />
+
+          <TypeField value={d.type} onChange={(v) => set("type", v)} />
         </div>
 
         <details className="tier">
-          <summary>Optional fields <span className="dim small">priority, type, stakeholders, notes — never required</span></summary>
+          <summary>Optional fields <span className="dim small">stakeholders, notes — never required</span></summary>
           <div className="form">
-            <label>Priority
-              <select value={d.priority}
-                      onChange={(e) => set("priority", e.target.value as Ticket["priority"])}>
-                {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </label>
-
-            <label>Type
-              <select value={d.type ?? ""}
-                      onChange={(e) => set("type", (e.target.value || null) as Ticket["type"])}>
-                <option value="">— not known yet —</option>
-                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
-
             <label>Stakeholders (comma separated)
               <input value={d.stakeholders.join(", ")}
                      onChange={(e) => set("stakeholders", e.target.value.split(",").map((s) => s.trim()))}
@@ -219,20 +202,16 @@ export default function TicketForm({
         </details>
 
         <details className="tier">
-          <summary>Background metadata <span className="dim small">set by the app and the triage loop</span></summary>
+          <summary>Background metadata <span className="dim small">set by the app</span></summary>
           <dl className="meta">
             <dt>State</dt><dd>{d.state}</dd>
-            <dt>Release</dt><dd>{d.sprint ?? "backlog"}</dd>
+            <dt>Ships in</dt><dd>{d.sprint ?? "not scheduled"}</dd>
+            <dt>Planned</dt><dd>{d.planned ?? "—"}</dd>
             <dt>Opened</dt><dd>{d.opened ?? "—"}</dd>
             <dt>Last touched</dt><dd>{d.lastTouched ?? "—"}</dd>
             <dt>Closed</dt><dd>{d.closed ?? "—"}</dd>
             <dt>Carried over</dt>
-            <dd>
-              {d.carryovers} sprint{d.carryovers === 1 ? "" : "s"}
-              <button type="button" className="mini" onClick={() => set("carryovers", d.carryovers + 1)}>
-                record a carryover
-              </button>
-            </dd>
+            <dd>{d.carryovers} time{d.carryovers === 1 ? "" : "s"}</dd>
           </dl>
         </details>
 

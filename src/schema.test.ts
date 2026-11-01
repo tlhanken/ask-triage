@@ -1,18 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
-  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, addDays, backlog,
-  audit, auditTicket, computeFlags, defaultSprints, derive, externalLabel, fillState, findSprint, hasShipped, iso,
-  inSprint, isFrozen, loadUnits, localStamp, matchProjects, PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate,
-  queueHealth,
-  REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket, sprintNames,
+  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, addDays,
+  beingWorkedOn, computeFlags, currentRelease, defaultSprints, derive, externalLabel, fillState, findSprint,
+  hasShipped, iso, isFrozen, isReady, loadUnits, localStamp, matchProjects, missingRequired, nudges,
+  PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate, queueHealth, releaseOrder, riskAlerts, shipsLate, spanOf,
+  startsTooLate, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket,
 } from "./schema";
 import {
-  HISTORY_CAP, STORE_VERSION, addProject, addSprint, applyPlan, blankTicket, compareSprints, createTicket, defaultRevisit,
-  deleteTicket, explainPlan, fillReleaseDates, freshStore, moveTicketToSprint, optimizePlan, projectUsage,
-  planRevert, recordDecision, readStore, removeProject, removeSprint,
-  revertTo, resetToSeed, revisitDue, revisitFor, serialize, shiftSprint, slippedIn, stats, acceptedThisSprint, triageQueue,
-  undecided, undoLast, updateSprint, updateTicket, withHistory,
+  type Store, HISTORY_CAP, STORE_VERSION, addProject, addSprint, applyCloseOut, applyPlan, blankTicket,
+  checkReport, closeOutQueue, compareSprints, createTicket, defaultRevisit, deleteTicket, explainPlan, fillOut,
+  fillOutQueue, fillReleaseDates, freshStore, moveTicketToSprint, nextRelease, optimizePlan, pipeline,
+  projectUsage, planRevert, recordDecision, readStore, removeProject, removeSprint, revertTo, resetToSeed,
+  lastSetAside, revisitDue, scheduleQueue, serialize, shiftSprint, slippedIn, updateSprint, updateTicket,
+  withHistory,
 } from "./store";
+import { mk, readyStore } from "./test-fixtures";
+import { type Settings } from "./schema";
+
+const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, stamp, toJson } from "./exporters";
 
 /** A due date N days from now. The clock is frozen at NOW below, so "now" here,
@@ -21,14 +26,6 @@ const isoFromNow = (days: number): string => {
   const d = new Date(Date.now() + days * 86_400_000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
-
-const mk = (over: Partial<Ticket>): Ticket => ({
-  id: 1, name: "x", summary: "s", projects: ["Atlas"], externalUrl: null,
-  dueDate: null, estimate: 2, priority: "Should", type: null, stakeholders: ["S"], notes: "",
-  state: "New", opened: null, sprint: null, carryovers: 0,
-  lastTouched: null, closed: null,
-  ...over,
-});
 
 // Fixed clock: these numbers are the ones the spreadsheet computed for the same rows.
 const NOW = new Date("2026-10-18T12:00:00Z");
@@ -42,11 +39,11 @@ afterAll(() => { vi.useRealTimers(); });
 
 describe("derivation matches the spreadsheet", () => {
   const caseA = mk({
-    priority: "Critical", estimate: 2, state: "In Progress", opened: "2026-09-08",
+    priority: "Critical", estimate: 2, state: "Committed", opened: "2026-09-08",
     dueDate: "2026-11-01", sprint: "v0.23", carryovers: 1, lastTouched: "2026-10-15",
   });
   const caseB = mk({
-    priority: "Should", estimate: 1, state: "Accepted-Backlog", opened: "2026-06-20",
+    priority: "Should", estimate: 1, state: "New", opened: "2026-06-20",
     dueDate: null, carryovers: 0, lastTouched: "2026-09-23",
   });
 
@@ -66,9 +63,9 @@ describe("derivation matches the spreadsheet", () => {
   });
 
   it("SLIPPED fires once carryovers reach the threshold", () => {
-    expect(computeFlags(mk({ state: "In Progress", carryovers: 1 }), DEFAULT_SETTINGS, NOW))
+    expect(computeFlags(mk({ state: "Committed", carryovers: 1 }), DEFAULT_SETTINGS, NOW))
       .not.toContain("SLIPPED");
-    expect(computeFlags(mk({ state: "In Progress", carryovers: 2 }), DEFAULT_SETTINGS, NOW))
+    expect(computeFlags(mk({ state: "Committed", carryovers: 2 }), DEFAULT_SETTINGS, NOW))
       .toContain("SLIPPED");
   });
 
@@ -103,7 +100,7 @@ describe("version sprints", () => {
   it("the seeded sprint columns run newest-release first", () => {
     const s = freshStore();
     expect(sprintNames(s.settings)).toEqual(["v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
-    expect(s.settings.currentSprint).toBe("v0.23");
+    expect(currentRelease(s.settings, NOW)!.name).toBe("v0.23");
   });
 
   it("the board order is the stored order, and it is reorderable", () => {
@@ -122,12 +119,12 @@ describe("version sprints", () => {
   it("one column per sprint, and a backlog for the unscheduled", () => {
     const s = freshStore();
     const s1 = moveTicketToSprint(s, 1, "v0.24", NOW);
-    expect(inSprint(s1.tickets, "v0.24").map((t) => t.id)).toEqual([1]);
+    expect(s1.tickets.filter((t) => t.sprint === "v0.24").map((t) => t.id)).toEqual([1]);
     expect(s1.tickets.find((t) => t.id === 1)!.state).toBe("Committed");
     const s2 = moveTicketToSprint(s1, 1, null, NOW);
-    expect(inSprint(s2.tickets, "v0.24")).toHaveLength(0);
-    expect(s2.tickets.find((t) => t.id === 1)!.state).toBe("Accepted-Backlog");
-    expect(backlog(s2.tickets).some((t) => t.id === 1)).toBe(true);
+    expect(s2.tickets.filter((t) => t.sprint === "v0.24")).toHaveLength(0);
+    expect(s2.tickets.find((t) => t.id === 1)!.state).toBe("New");
+    expect(s2.tickets.find((t) => t.id === 1)!.sprint).toBeNull();
   });
 
   it("a new sprint is slotted in by version, newest left", () => {
@@ -190,7 +187,7 @@ describe("editing in the browser (store CRUD)", () => {
     const s = recordDecision(freshStore(), 2, "Defer", "later", "2026-11-02", NOW);
     const s1 = withHistory(s, "delete 2", (cur) => deleteTicket(cur, 2), NOW);
     const s2 = revertTo(s1, 0, NOW);
-    expect(revisitFor(s2, 2)).toBe("2026-11-02");
+    expect(lastSetAside(s2, 2)?.revisit).toBe("2026-11-02");
     expect(revisitDue(s2, new Date(2026, 10, 2)).map((x) => x.ticket.id)).toContain(2);
   });
 
@@ -224,54 +221,58 @@ describe("field discipline", () => {
     }
   });
 
-  it("flags an estimate that cannot finish before the due date", () => {
-    const soon = mk({ estimate: 3, dueDate: isoFromNow(10) });
-    expect(derive(soon, DEFAULT_SETTINGS).overEstimate).toBe(true);
-    const comfortable = mk({ estimate: 1, dueDate: isoFromNow(60) });
-    expect(derive(comfortable, DEFAULT_SETTINGS).overEstimate).toBe(false);
+  it("flags a ticket whose ship release ships after its due date", () => {
+    const settings = freshStore().settings;                          // v0.23 ships in 14 days
+    const late = mk({ sprint: "v0.23", dueDate: isoFromNow(10) });
+    expect(derive(late, settings).shipsLate).toBe(true);
+    const fine = mk({ sprint: "v0.23", dueDate: isoFromNow(60) });
+    expect(derive(fine, settings).shipsLate).toBe(false);
+    expect(derive(mk({ dueDate: isoFromNow(10) }), settings).shipsLate).toBe(false);   // not scheduled
   });
 });
 
-describe("decision loop", () => {
-  it("accepting moves the ticket into the sprint and records a decision", () => {
-    const s0 = freshStore();
-    const first = undecided(s0)[0];
-    const s1 = recordDecision(s0, first.id, "Accept", "", null, NOW);
-    const moved = s1.tickets.find((t) => t.id === first.id)!;
-    expect(moved.state).toBe("Committed");
-    expect(moved.sprint).toBe(s0.settings.currentSprint);
-    expect(s1.decisions).toHaveLength(1);
-    expect(acceptedThisSprint(s1)).toBe(1);
-    expect(undecided(s1).length).toBe(undecided(s0).length - 1);
-  });
-
+describe("decisions", () => {
   it("declining closes the ticket", () => {
-    const s0 = freshStore();
-    const id = undecided(s0)[0].id;
-    const s1 = recordDecision(s0, id, "Decline", "not worth it", null, NOW);
-    expect(s1.tickets.find((t) => t.id === id)!.state).toBe("Won't Do");
-    expect(stats(s1).declined).toBe(1);
+    const s1 = recordDecision(freshStore(), 1, "Decline", "not worth it", null, NOW);
+    expect(s1.tickets.find((t) => t.id === 1)!.state).toBe("Won't Do");
+    expect(s1.tickets.find((t) => t.id === 1)!.closed).toBe("2026-10-18");
   });
 
-  it("undo restores the exact prior ticket and drops the decision", () => {
+  it("deferring and blocking take a ticket off the plan", () => {
+    let s = moveTicketToSprint(readyStore(), 1, "v0.24", NOW);
+    s = moveTicketToSprint(s, 2, "v0.24", NOW);
+    s = recordDecision(s, 1, "Defer", "later", "2026-11-16", NOW);
+    s = recordDecision(s, 2, "Block", "waiting on partner", "2026-11-02", NOW);
+    expect(s.tickets.find((t) => t.id === 1)).toMatchObject({ state: "Deferred", sprint: null });
+    expect(s.tickets.find((t) => t.id === 2)).toMatchObject({ state: "Blocked", sprint: null });
+  });
+
+  it("the decision log carries no copy of the ticket for undo: History is the undo", () => {
+    const s1 = recordDecision(freshStore(), 1, "Defer", "later", "2027-01-04", NOW);
+    expect(s1.decisions[0]).not.toHaveProperty("prev");
     const s0 = freshStore();
-    const id = undecided(s0)[0].id;
-    const before = s0.tickets.find((t) => t.id === id)!;
-    const s1 = recordDecision(s0, id, "Defer", "later", "2027-01-01", NOW);
-    const s2 = undoLast(s1);
-    expect(s2.decisions).toHaveLength(0);
-    expect(s2.tickets.find((t) => t.id === id)).toEqual(before);
+    const one = withHistory(s0, "defer 1", (cur) => recordDecision(cur, 1, "Defer", "later", "2027-01-04", NOW), NOW);
+    expect(revertTo(one, 0, NOW).tickets.find((t) => t.id === 1)).toEqual(s0.tickets.find((t) => t.id === 1));
   });
 
   it("defer keeps the reason and revisit date for the digest", () => {
-    const s0 = freshStore();
-    const id = undecided(s0)[0].id;
-    const s1 = recordDecision(s0, id, "Defer", "behind SSO", "2027-01-15", NOW);
+    const s1 = recordDecision(freshStore(), 1, "Defer", "behind SSO", "2027-01-15", NOW);
     const md = decisionsToMarkdown(s1, NOW);
     expect(md).toContain("Priority tracker");
     expect(md).toContain("Deferred (1)");
     expect(md).toContain("behind SSO");
     expect(md).toContain("revisit 2027-01-15");
+  });
+
+  it("the digest groups done and carried-over work too", () => {
+    const now = new Date(2026, 10, 1);                        // v0.22 shipped 2026-10-18
+    let s = moveTicketToSprint(readyStore(), 1, "v0.22", NOW);
+    s = moveTicketToSprint(s, 2, "v0.22", NOW);
+    s = applyCloseOut(s, [{ id: 1, choice: "Done" }, { id: 2, choice: "Carry over" }], now);
+    const md = decisionsToMarkdown(s, now);
+    expect(md).toContain("## Done (1)");
+    expect(md).toContain("shipped in v0.22");
+    expect(md).toContain("## Carried over (1)");
   });
 });
 
@@ -459,7 +460,7 @@ describe("history and revert", () => {
 
   it("refuses a save in the full-copy history format whole", () => {
     const old = { ...freshStore(), version: 3 };
-    expect(STORE_VERSION).toBe(4);
+    expect(STORE_VERSION).toBe(5);
     expect(readStore(JSON.stringify(old))).toBeNull();
   });
 
@@ -525,23 +526,34 @@ describe("deferred work comes back", () => {
     s = recordDecision(s, id, "Defer", "not yet", "2026-11-02", deferOn);
     expect(revisitDue(s, later)).toHaveLength(1);
     s = recordDecision(s, id, "Accept", "", null, later);
-    expect(s.tickets.find((t) => t.id === id)!.state).toBe("Committed");
-    expect(revisitFor(s, id)).toBe("2026-11-02");              // the old defer is still on record
+    expect(s.tickets.find((t) => t.id === id)!.state).toBe("New");
+    expect(lastSetAside(s, id)?.revisit).toBe("2026-11-02");              // the old defer is still on record
     expect(revisitDue(s, later)).toEqual([]);                  // but it is no longer deferred
   });
 
-  it("leads the triage queue with work that has come back", () => {
+  it("leads Fill out with work that has come back", () => {
     let s = freshStore();
     const id = s.tickets[0].id;
     s = recordDecision(s, id, "Defer", "later", "2026-11-02", deferOn);
     // before its day it is not in the queue at all
-    expect(triageQueue(s, [], new Date(2026, 9, 26)).map((t) => t.id)).not.toContain(id);
-    // on its day it leads, ahead of the undecided
-    const on = triageQueue(s, [], new Date(2026, 10, 2));
-    expect(on[0].id).toBe(id);
+    expect(fillOutQueue(s, new Date(2026, 9, 26)).map((x) => x.ticket.id)).not.toContain(id);
+    // on its day it leads, ahead of the incomplete
+    const on = fillOutQueue(s, new Date(2026, 10, 2));
+    expect(on[0].ticket.id).toBe(id);
+    expect(on[0].returned!.reason).toBe("later");
     expect(on.length).toBeGreaterThan(1);
-    // and skipping it takes it back out
-    expect(triageQueue(s, [id], new Date(2026, 10, 2)).map((t) => t.id)).not.toContain(id);
+  });
+
+  it("brings blocked work back too, with its block reason", () => {
+    let s = moveTicketToSprint(readyStore(), 1, "v0.24", NOW);
+    s = recordDecision(s, 1, "Block", "waiting on partner sizing", "2026-11-02", deferOn);
+    expect(fillOutQueue(s, new Date(2026, 9, 26)).map((x) => x.ticket.id)).not.toContain(1);
+    const back = fillOutQueue(s, new Date(2026, 10, 2));
+    expect(back[0]).toMatchObject({ ticket: { id: 1, state: "Blocked" }, returned: { reason: "waiting on partner sizing" } });
+    // taking it on clears it: it is ready, so it moves to Schedule
+    s = recordDecision(s, 1, "Accept", "", null, new Date(2026, 10, 2));
+    expect(fillOutQueue(s, new Date(2026, 10, 2)).map((x) => x.ticket.id)).not.toContain(1);
+    expect(scheduleQueue(s, new Date(2026, 10, 2)).map((t) => t.id)).toContain(1);
   });
 
   it("reports the most recent defer, so deferring again pushes the date out", () => {
@@ -549,7 +561,7 @@ describe("deferred work comes back", () => {
     const id = s.tickets[0].id;
     s = recordDecision(s, id, "Defer", "first", "2026-10-26", deferOn);
     s = recordDecision(s, id, "Defer", "again", "2026-11-23", new Date(2026, 9, 26));
-    expect(revisitFor(s, id)).toBe("2026-11-23");
+    expect(lastSetAside(s, id)?.revisit).toBe("2026-11-23");
     expect(revisitDue(s, new Date(2026, 10, 2))).toEqual([]);   // pushed out, so not due
   });
 });
@@ -613,12 +625,18 @@ describe("one way in for every load path", () => {
     expect(back.settings).toEqual(s.settings);
   });
 
-  it("migrates an old shape on the way in", () => {
+  it("repairs the project list on the way in", () => {
     const s = freshStore();
-    const legacy = { ...s, tickets: [{ ...s.tickets[0], priority: undefined, type: "Critical" }] };
-    const back = readStore(JSON.stringify(legacy))!;
-    expect(back.tickets[0].priority).toBe("Critical");
-    expect(back.tickets[0].type).toBeNull();
+    const lost = { ...s, settings: { ...s.settings, projects: ["Atlas"] } };
+    const back = readStore(JSON.stringify(lost))!;
+    for (const p of new Set(s.tickets.flatMap((t) => t.projects))) expect(back.settings.projects).toContain(p);
+  });
+
+  it("refuses an older format whole instead of converting it", () => {
+    const s = freshStore();
+    const old = { ...s, version: 4, tickets: s.tickets.map(({ noHardDate: _n, planned: _p, ...t }) => t) };
+    expect(readStore(JSON.stringify(old))).toBeNull();
+    expect(readStore(JSON.stringify({ ...s, version: 4 }))).toBeNull();
   });
 
   it("refuses what is not a register, rather than half-loading it", () => {
@@ -668,171 +686,293 @@ describe("project picker", () => {
   });
 });
 
-describe("review sweep", () => {
-  it("raises a gap for every piece of data missing where it matters", () => {
-    const s = freshStore();
-    const bare: Ticket = {
-      ...blankTicket(), id: 900, name: "bare", summary: "", projects: [], stakeholders: [],
-      dueDate: null, state: "New",
-    };
-    const alerts = auditTicket(bare, s.settings, NOW);
-    const kinds = alerts.map((a) => a.kind);
-    expect(kinds).toContain("NO-SUMMARY");
-    expect(kinds).toContain("NO-PROJECTS");
-    expect(kinds).toContain("NO-STAKEHOLDERS");
-    expect(kinds).toContain("NO-PRIORITY");        // unclassified is missing critical info
-    expect(kinds).toContain("NO-CATEGORY");
-    expect(kinds).toContain("NO-DUE");
-    expect(alerts.every((a) => a.why.length > 0)).toBe(true);   // each says why it matters
+describe("ready to schedule", () => {
+  const filled = (over: Partial<Ticket> = {}): Ticket =>
+    mk({ priority: "Should", type: "Back-end", estimate: 1, dueDate: null, noHardDate: true, ...over });
+
+  it("needs priority, type, estimate, and a date or an explicit no-hard-date", () => {
+    expect(isReady(filled())).toBe(true);
+    expect(missingRequired(filled({ priority: null }))).toEqual(["priority"]);
+    expect(missingRequired(filled({ type: null }))).toEqual(["type"]);
+    expect(missingRequired(filled({ estimate: null }))).toEqual(["estimate"]);
+    expect(missingRequired(filled({ noHardDate: false }))).toEqual(["dueDate"]);
+    expect(isReady(filled({ noHardDate: false, dueDate: "2026-12-01" }))).toBe(true);
   });
 
-  it("raises no gap for a ticket that is filled in", () => {
-    const s = freshStore();
-    const good: Ticket = {
-      ...blankTicket(), id: 901, name: "good", summary: "why it exists", projects: ["Atlas"],
-      priority: "Should", type: "Back-end", stakeholders: ["Dana R."], state: "In Progress",
-      dueDate: isoFromNow(60), estimate: 1, lastTouched: isoFromNow(0),
-    };
-    expect(auditTicket(good, s.settings, NOW).filter((a) => a.severity === "gap")).toEqual([]);
+  it("project, summary and stakeholders are nudges, never gates", () => {
+    const t = filled({ projects: [], summary: "", stakeholders: [] });
+    expect(isReady(t)).toBe(true);
+    const kinds = nudges(t).map((a) => a.kind);
+    expect(kinds).toEqual(["NO-SUMMARY", "NO-PROJECTS", "NO-STAKEHOLDERS"]);
+    expect(nudges(t).every((a) => a.why.length > 0)).toBe(true);
   });
 
-  it("notices committed work with no date to be late against", () => {
-    const s = freshStore();
-    const t: Ticket = {
-      ...blankTicket(), id: 902, name: "committed", summary: "x", projects: ["Atlas"],
-      priority: "Should", type: "Back-end", stakeholders: ["Dana R."], state: "Committed",
-      dueDate: null, estimate: 1,
-    };
-    const kinds = auditTicket(t, s.settings, NOW).map((a) => a.kind);
-    expect(kinds).toContain("NO-DUE");
-    expect(auditTicket(t, s.settings, NOW).find((a) => a.kind === "NO-DUE")!.why)
-      .toMatch(/cannot be late/);
+  it("a new ticket starts blank, and so is not ready", () => {
+    const b = blankTicket();
+    expect(b).toMatchObject({ estimate: null, priority: null, type: null, dueDate: null, noHardDate: false });
+    expect(isReady({ ...b, id: 1 })).toBe(false);
   });
 
-  it("catches work left behind in a release that already shipped", () => {
+  it("every seed ticket starts in Fill out: nobody chose an estimate", () => {
     const s = freshStore();
-    const t: Ticket = {
-      ...blankTicket(), id: 903, name: "stranded", summary: "x", projects: ["Atlas"],
-      stakeholders: ["Dana R."], state: "In Progress", sprint: "v0.21", estimate: 1,
-      lastTouched: isoFromNow(0),
-    };
-    expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("SHIPPED-RELEASE");
+    expect(s.tickets.every((t) => t.estimate === null)).toBe(true);
+    expect(fillOutQueue(s, NOW)).toHaveLength(s.tickets.length);
+    expect(scheduleQueue(s, NOW)).toEqual([]);
+  });
+
+  it("a date and no-hard-date never both hold: the newer answer wins", () => {
+    let s = updateTicket(freshStore(), 1, { noHardDate: true }, NOW);
+    expect(s.tickets[0]).toMatchObject({ noHardDate: true, dueDate: null });
+    s = updateTicket(s, 1, { dueDate: "2026-12-01" }, NOW);
+    expect(s.tickets[0]).toMatchObject({ noHardDate: false, dueDate: "2026-12-01" });
+  });
+
+  it("filling the last required field accepts the ticket and moves it to Schedule", () => {
+    let s = freshStore();
+    const id = s.tickets.find((t) => t.priority !== null && t.type !== null)!.id;
+    s = fillOut(s, id, { estimate: 2 }, NOW);
+    const t = s.tickets.find((x) => x.id === id)!;
+    if (!t.dueDate) s = fillOut(s, id, { noHardDate: true }, NOW);
+    expect(scheduleQueue(s, NOW).map((x) => x.id)).toContain(id);
+    expect(fillOutQueue(s, NOW).map((x) => x.ticket.id)).not.toContain(id);
+    expect(s.decisions.filter((d) => d.action === "Accept").map((d) => d.ticketId)).toEqual([id]);
+    // a further edit records no second accept
+    s = fillOut(s, id, { estimate: 3 }, NOW);
+    expect(s.decisions.filter((d) => d.action === "Accept")).toHaveLength(1);
+  });
+
+  it("an estimate is a whole number of sprints", () => {
+    expect(missingRequired(filled({ estimate: 0 }))).toEqual(["estimate"]);
+    expect(missingRequired(filled({ estimate: 1.5 }))).toEqual(["estimate"]);
+    expect(missingRequired(filled({ estimate: 7 }))).toEqual([]);
+  });
+});
+
+describe("spans", () => {
+  // freshStore's releases, in ship order: v0.21, v0.22 (shipped), v0.23 (current), v0.24, v0.25
+  const settings = () => freshStore().settings;
+
+  it("counts releases in ship-date order, not display order", () => {
+    expect(releaseOrder(settings().sprints).map((x) => x.name)).toEqual(["v0.21", "v0.22", "v0.23", "v0.24", "v0.25"]);
+    const undated = [...settings().sprints, { name: "v0.30", freeze: null, release: null }, { name: "v0.26", freeze: null, release: null }];
+    expect(releaseOrder(undated).slice(-2).map((x) => x.name)).toEqual(["v0.26", "v0.30"]);
+  });
+
+  it("a ticket occupies as many releases as its estimate, ending where it ships", () => {
+    expect(spanOf(mk({ sprint: "v0.24", estimate: 2 }), settings())).toEqual({ releases: ["v0.23", "v0.24"], short: 0 });
+    expect(spanOf(mk({ sprint: "v0.22", estimate: 3 }), settings())).toEqual({ releases: ["v0.21", "v0.22"], short: 1 });
+    expect(spanOf(mk({ sprint: null, estimate: 3 }), settings()).releases).toEqual([]);
+    expect(spanOf(mk({ sprint: "v0.24", estimate: null }), settings()).releases).toEqual(["v0.24"]);
+  });
+
+  it("costs one unit in each release it spans", () => {
+    const t: Ticket[] = [
+      mk({ id: 1, estimate: 2, state: "Committed", sprint: "v0.24" }),
+      mk({ id: 2, estimate: 3, state: "Committed", sprint: "v0.25" }),
+    ];
+    const st = settings();
+    expect(loadUnits(t, "v0.23", st)).toBe(2);
+    expect(loadUnits(t, "v0.24", st)).toBe(2);
+    expect(loadUnits(t, "v0.25", st)).toBe(1);
+    expect(fillState(t, "v0.24", { ...st, commitTargetPerSprint: 2 }).state).toBe("full");
+    expect(fillState(t, "v0.24", { ...st, commitTargetPerSprint: 1 })).toEqual({ load: 2, room: -1, state: "over" });
+  });
+
+  it("a growing estimate keeps the ship release and reaches further back", () => {
+    let s = moveTicketToSprint(readyStore(), 1, "v0.25", NOW);
+    s = updateTicket(s, 1, { estimate: 2 }, NOW);
+    const t = s.tickets.find((x) => x.id === 1)!;
+    expect(t.sprint).toBe("v0.25");
+    expect(spanOf(t, s.settings).releases).toEqual(["v0.24", "v0.25"]);
+  });
+
+  it("the current release is derived: the earliest neither shipped nor frozen", () => {
+    expect(currentRelease(settings(), NOW)!.name).toBe("v0.23");
+    expect(currentRelease(settings(), new Date(2026, 10, 2))!.name).toBe("v0.24");   // v0.23 ships 2026-11-01
+  });
+});
+
+describe("starting too late", () => {
+  it("is reported for work placed where it would have had to start in a shipped release", () => {
+    // three sprints shipping in the current release: it would have started in v0.21
+    const s = updateTicket(moveTicketToSprint(readyStore(3), 1, "v0.23", NOW), 1, {}, NOW);
+    const t = s.tickets.find((x) => x.id === 1)!;
+    expect(t.planned).toBe("2026-10-18");
+    expect(startsTooLate(t, s.settings)).toBe(true);
+    expect(riskAlerts(t, s.settings, NOW).map((a) => a.kind)).toContain("STARTS-LATE");
+  });
+
+  it("is not reported once a span has simply progressed", () => {
+    // two sprints, planned in time to ship in v0.24: spans v0.23 and v0.24
+    const s = moveTicketToSprint(readyStore(2), 1, "v0.24", NOW);
+    const t = s.tickets.find((x) => x.id === 1)!;
+    expect(startsTooLate(t, s.settings)).toBe(false);
+    // later, v0.23 has shipped: progress, not lateness
+    expect(hasShipped(findSprint(s.settings, "v0.23"), new Date(2026, 10, 5))).toBe(true);
+    expect(startsTooLate(t, s.settings)).toBe(false);
+    expect(beingWorkedOn(t, s.settings, NOW)).toBe(true);
+  });
+
+  it("is reported when the span runs off the front of the board", () => {
+    const s = moveTicketToSprint(readyStore(9), 1, "v0.25", NOW);
+    expect(startsTooLate(s.tickets.find((x) => x.id === 1)!, s.settings)).toBe(true);
+  });
+
+  it("carrying over does not make work late", () => {
+    const shipped = new Date(2026, 10, 2);                         // v0.23 has shipped
+    let s = moveTicketToSprint(readyStore(2), 1, "v0.23", new Date(2026, 9, 1));
+    s = { ...s, tickets: s.tickets.map((t) => (t.id === 1 ? { ...t, planned: "2026-09-01" } : t)) };
+    s = applyCloseOut(s, [{ id: 1, choice: "Carry over" }], shipped);
+    const t = s.tickets.find((x) => x.id === 1)!;
+    expect(t).toMatchObject({ sprint: "v0.24", carryovers: 1, planned: "2026-09-01" });
+    expect(startsTooLate(t, s.settings)).toBe(false);
+  });
+});
+
+describe("Check", () => {
+  it("reports work that ships after its due date, with why", () => {
+    let s = readyStore();
+    s = updateTicket(s, 1, { dueDate: isoFromNow(20), noHardDate: false }, NOW);
+    s = moveTicketToSprint(s, 1, "v0.24", NOW);                    // ships in 42 days
+    const rel = checkReport(s, NOW).find((r) => r.release === "v0.24")!;
+    const alert = rel.rows[0].alerts.find((a) => a.kind === "WONT-FIT")!;
+    expect(alert.why).toMatch(/after its due date/);
+    expect(shipsLate(s.tickets.find((t) => t.id === 1)!, s.settings)).toBe(true);
+  });
+
+  it("reports a release over capacity, and closed tickets raise nothing", () => {
+    let s = readyStore();
+    s = { ...s, settings: { ...s.settings, commitTargetPerSprint: 1 } };
+    s = moveTicketToSprint(s, 1, "v0.24", NOW);
+    s = moveTicketToSprint(s, 2, "v0.24", NOW);
+    const rel = checkReport(s, NOW).find((r) => r.release === "v0.24")!;
+    expect(rel.alerts.map((a) => a.kind)).toContain("OVER-CAPACITY");
+    s = recordDecision(s, 2, "Decline", "no", null, NOW);
+    expect(checkReport(s, NOW).find((r) => r.release === "v0.24")?.alerts ?? []).toEqual([]);
   });
 
   it("catches a due date that has already passed", () => {
-    const s = freshStore();
-    const t: Ticket = {
-      ...blankTicket(), id: 904, name: "late", summary: "x", projects: ["Atlas"],
-      stakeholders: ["Dana R."], state: "In Progress", dueDate: isoFromNow(-5), estimate: 1,
-      lastTouched: isoFromNow(0),
-    };
-    expect(auditTicket(t, s.settings, NOW).map((a) => a.kind)).toContain("PAST-DUE");
+    const t = mk({ dueDate: isoFromNow(-5), state: "New" });
+    expect(riskAlerts(t, freshStore().settings, NOW).map((a) => a.kind)).toContain("PAST-DUE");
+    expect(riskAlerts({ ...t, state: "Done" }, freshStore().settings, NOW)).toEqual([]);
   });
 
-  it("leaves a closed ticket entirely alone", () => {
-    const s = freshStore();
-    const t: Ticket = {
-      ...blankTicket(), id: 905, name: "done", summary: "x", projects: ["Atlas"],
-      stakeholders: ["Dana R."], state: "Done", dueDate: isoFromNow(-30), estimate: 1,
-      lastTouched: isoFromNow(-30),
-    };
-    // not even its gaps: finished work needs nothing, and saying otherwise is noise
-    expect(auditTicket(t, s.settings, NOW)).toEqual([]);
+  it("does not check work still in Fill out: its card already shows its risks", () => {
+    const s = freshStore();                                            // nothing is ready
+    expect(checkReport(s, NOW)).toEqual([]);
+    expect(pipeline(s, NOW).check).toBe(0);
   });
 
-  it("sweeps open tickets by default and can include closed", () => {
-    const s = freshStore();
-    const open = audit(s.tickets, s.settings, {}, NOW);
-    const all = audit(s.tickets, s.settings, { includeClosed: true }, NOW);
-    expect(open.tickets).toBeGreaterThan(0);
-    expect(all.tickets).toBeGreaterThanOrEqual(open.tickets);
-    expect(open.rows.every((r) => r.ticket.state !== "Done" && r.ticket.state !== "Won't Do")).toBe(true);
+  it("the header counts each step", () => {
+    const s = readyStore();
+    const p = pipeline(s, NOW);
+    expect(p.fillOut).toBe(0);
+    expect(p.schedule).toBe(s.tickets.length);
+    expect(pipeline(freshStore(), NOW).fillOut).toBe(freshStore().tickets.length);
+  });
+});
+
+describe("release close-out", () => {
+  const after = new Date(2026, 10, 2);                             // v0.23 shipped 2026-11-01
+
+  const placed = () => {
+    let s = readyStore();
+    s = moveTicketToSprint(s, 1, "v0.23", NOW);
+    s = moveTicketToSprint(s, 2, "v0.23", NOW);
+    s = moveTicketToSprint(s, 3, "v0.23", NOW);
+    s = moveTicketToSprint(s, 4, "v0.24", NOW);
+    return updateTicket(s, 4, { estimate: 2 }, NOW);              // v0.24 spans v0.23
+  };
+
+  it("lists the open work that ships in a shipped release, and only that", () => {
+    const q = closeOutQueue(placed(), after);
+    expect(q.map((c) => c.release)).toEqual(["v0.23"]);
+    expect(q[0].tickets.map((t) => t.id)).toEqual([1, 2, 3]);    // 4 only continues through v0.23
+    expect(q[0].next).toBe("v0.24");
+    expect(closeOutQueue(placed(), NOW)).toEqual([]);            // not shipped yet
   });
 
-  it("puts the worst tickets first, so fixing from the top shortens the list", () => {
-    const s = freshStore();
-    const r = audit(s.tickets, s.settings, {}, NOW);
-    expect(r.withAlerts).toBeGreaterThan(0);
-    for (let i = 1; i < r.rows.length; i++) {
-      expect(r.rows[i - 1].alerts.length).toBeGreaterThanOrEqual(r.rows[i].alerts.length);
-    }
-    expect(r.alerts).toBe(r.gaps + r.risks);
+  it("applies each choice, and leaves the undecided where they are", () => {
+    const s = applyCloseOut(placed(), [{ id: 1, choice: "Done" }, { id: 2, choice: "Carry over" }], after);
+    expect(s.tickets.find((t) => t.id === 1)).toMatchObject({ state: "Done", closed: "2026-11-02" });
+    expect(s.tickets.find((t) => t.id === 2)).toMatchObject({ state: "Committed", sprint: "v0.24", carryovers: 1 });
+    expect(closeOutQueue(s, after)[0].tickets.map((t) => t.id)).toEqual([3]);
+    const back = applyCloseOut(s, [{ id: 3, choice: "Unschedule" }], after);
+    expect(back.tickets.find((t) => t.id === 3)).toMatchObject({ state: "New", sprint: null, planned: null });
+    expect(closeOutQueue(back, after)).toEqual([]);
+  });
+
+  it("is one revertible action", () => {
+    const s0 = placed();
+    const s1 = withHistory(s0, "close out", (cur) => applyCloseOut(cur, [{ id: 1, choice: "Done" }, { id: 2, choice: "Done" }], after), after);
+    expect(s1.history).toHaveLength(1);
+    expect(revertTo(s1, 0, after).tickets).toEqual(s0.tickets);
+  });
+
+  it("cannot carry over when there is no later release", () => {
+    let s = readyStore();
+    s = moveTicketToSprint(s, 1, "v0.25", NOW);
+    const later = new Date(2027, 0, 1);                            // everything has shipped
+    expect(nextRelease(s.settings, "v0.25", later)).toBeNull();
+    expect(closeOutQueue(s, later)[0].next).toBeNull();
+    expect(applyCloseOut(s, [{ id: 1, choice: "Carry over" }], later)).toBe(s);
   });
 });
 
 describe("auto-optimize", () => {
-  it("only proposes for open tickets that have no release", () => {
-    const s = moveTicketToSprint(freshStore(), 1, "v0.24", NOW);
+  it("only proposes for ready, open tickets that have no release", () => {
+    let s = moveTicketToSprint(readyStore(), 1, "v0.24", NOW);
+    s = updateTicket(s, 2, { estimate: null }, NOW);              // not ready any more
     const plan = optimizePlan(s, NOW).moves;
     expect(plan.map((m) => m.id)).not.toContain(1);
-    for (const m of plan) {
-      expect(s.tickets.find((t) => t.id === m.id)!.sprint).toBeNull();
-    }
+    expect(plan.map((m) => m.id)).not.toContain(2);
+    for (const m of plan) expect(s.tickets.find((t) => t.id === m.id)!.sprint).toBeNull();
+    expect(optimizePlan(freshStore(), NOW).candidates).toBe(0);    // nothing in the seed is ready
   });
 
-  it("never proposes a release that has already shipped", () => {
-    const plan = optimizePlan(freshStore(), NOW).moves;
+  it("never proposes a span that includes a release that has already shipped", () => {
+    const plan = optimizePlan(readyStore(2), NOW).moves;
     expect(plan.length).toBeGreaterThan(0);
-    for (const m of plan) expect(["v0.23", "v0.24", "v0.25"]).toContain(m.to);
+    // two sprints: the earliest it can ship is v0.24 (spanning v0.23–v0.24)
+    for (const m of plan) expect(["v0.24", "v0.25"]).toContain(m.to);
   });
 
-  it("respects capacity per release, measured in work units", () => {
-    const s = freshStore();
-    const per = new Map<string, number>();
-    for (const m of optimizePlan(s, NOW).moves) {
-      const t = s.tickets.find((x) => x.id === m.id)!;
-      per.set(m.to, (per.get(m.to) ?? 0) + t.estimate);
+  it("respects capacity in every release a ticket spans", () => {
+    const s = readyStore(2);
+    const applied = applyPlan(s, optimizePlan(s, NOW).moves, NOW);
+    for (const name of ["v0.23", "v0.24", "v0.25"]) {
+      expect(loadUnits(applied.tickets, name, applied.settings)).toBeLessThanOrEqual(s.settings.commitTargetPerSprint);
     }
-    expect(per.size).toBeGreaterThan(0);
-    for (const [, units] of per) expect(units).toBeLessThanOrEqual(s.settings.commitTargetPerSprint);
   });
 
-  it("measures fullness in work units, not head count", () => {
-    const t: Ticket[] = [
-      { ...blankTicket(), id: 1, estimate: 2, state: "New", sprint: "v0.23" },
-      { ...blankTicket(), id: 2, estimate: 3, state: "New", sprint: "v0.23" },
-    ];
-    expect(loadUnits(t, "v0.23")).toBe(5);            // two tickets, five units
-    expect(fillState(t, "v0.23", 8)).toEqual({ load: 5, room: 3, state: "room" });
-    expect(fillState(t, "v0.23", 5).state).toBe("full");
-    expect(fillState(t, "v0.23", 4).state).toBe("over");
-    expect(loadUnits(t, "v0.24")).toBe(0);
-  });
-
-  it("will not squeeze a three-unit ticket into two units of room", () => {
+  it("will not ship a ticket where any release of its span is full", () => {
     const s = freshStore();
-    const tight = {
+    const tight: Store = {
       ...s,
-      settings: { ...s.settings, commitTargetPerSprint: 4 },
+      settings: { ...s.settings, commitTargetPerSprint: 1 },
       tickets: [
-        { ...blankTicket(), id: 100, name: "already in flight", projects: ["Atlas" as const],
-          estimate: 2 as const, state: "Committed" as const, sprint: "v0.23" },
-        { ...blankTicket(), id: 101, name: "big ask", projects: ["Atlas" as const],
-          estimate: 3 as const, state: "New" as const, sprint: null },
+        { ...mk({ id: 100, estimate: 1, state: "Committed", sprint: "v0.23", priority: "Should", type: "Driver" }), noHardDate: true },
+        { ...mk({ id: 101, estimate: 2, state: "New", sprint: null, priority: "Should", type: "Driver" }), noHardDate: true },
       ],
     };
     const move = optimizePlan(tight, NOW).moves.find((m) => m.id === 101)!;
-    expect(move).toBeTruthy();
-    expect(move.to).not.toBe("v0.23");                // 2 units left, 3 needed
-    expect(move.to).toBe("v0.24");
+    expect(move.to).toBe("v0.25");                    // v0.24 would span the full v0.23
+    expect(move.reason).toMatch(/v0.24–v0.25/);
   });
 
-  it("reports a ticket too large to fit any release", () => {
+  it("reports work longer than the releases left", () => {
     const s = freshStore();
-    const small = {
+    const r = optimizePlan({
       ...s,
-      settings: { ...s.settings, commitTargetPerSprint: 2 },
-      tickets: [{ ...blankTicket(), id: 100, name: "huge", projects: ["Atlas" as const],
-                  estimate: 3 as const, state: "New" as const, sprint: null }],
-    };
-    const r = optimizePlan(small, NOW);
+      tickets: [{ ...mk({ id: 100, estimate: 4, priority: "Should", type: "Driver" }), noHardDate: true }],
+    }, NOW);
     expect(r.moves).toEqual([]);
     expect(r.tooBig).toBe(1);
-    expect(explainPlan(r)).toMatch(/too large/);
+    expect(explainPlan(r)).toMatch(/longer than the releases left/);
   });
 
   it("places dated work before undated work", () => {
-    const s = freshStore();
+    const s = readyStore();
     const plan = optimizePlan(s, NOW).moves;
     const dated = plan.map((m) => Boolean(s.tickets.find((t) => t.id === m.id)!.dueDate));
     const firstUndated = dated.indexOf(false);
@@ -842,14 +982,20 @@ describe("auto-optimize", () => {
   });
 
   it("applying commits the moves and the whole batch is revertible", () => {
-    const s = freshStore();
+    const s = readyStore();
     const plan = optimizePlan(s, NOW).moves;
     const s1 = withHistory(s, "auto-optimize", (cur) => applyPlan(cur, plan, NOW), NOW);
     const moved = s1.tickets.find((t) => t.id === plan[0].id)!;
-    expect(moved.sprint).toBe(plan[0].to);
-    expect(moved.state).toBe("Committed");
+    expect(moved).toMatchObject({ sprint: plan[0].to, state: "Committed", planned: "2026-10-18" });
     const s2 = revertTo(s1, s1.history.length - 1, NOW);
     expect(s2.tickets.find((t) => t.id === plan[0].id)!.sprint).toBeNull();
+  });
+
+  it("never proposes a placement that starts too late", () => {
+    const s = readyStore(3);
+    const applied = applyPlan(s, optimizePlan(s, NOW).moves, NOW);
+    expect(applied.tickets.filter((t) => t.sprint).length).toBeGreaterThan(0);
+    for (const t of applied.tickets) expect(startsTooLate(t, applied.settings)).toBe(false);
   });
 });
 
@@ -868,7 +1014,7 @@ describe("release dates and feature freeze", () => {
   });
 
   it("auto-optimize skips frozen releases", () => {
-    let s = freshStore();
+    let s = readyStore();
     s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
     const r = optimizePlan(s, NOW);
     expect(r.moves.map((m) => m.to)).not.toContain("v0.23");
@@ -876,7 +1022,7 @@ describe("release dates and feature freeze", () => {
   });
 
   it("auto-optimize prefers a release that ships on or before the due date", () => {
-    let s = freshStore();
+    let s = readyStore();
     s = updateSprint(s, "v0.23", { freeze: "2020-01-01" });
     s = updateSprint(s, "v0.24", { freeze: "2020-01-01" });
     const r = optimizePlan(s, NOW);
@@ -893,7 +1039,7 @@ describe("release dates and feature freeze", () => {
   });
 
   it("still proposes when releases have no dates, and flags the uncertainty", () => {
-    const s = freshStore();
+    const s = readyStore();
     const undated: Sprint[] = s.settings.sprints.map((sp) => ({ ...sp, freeze: null, release: null }));
     const r = optimizePlan({ ...s, settings: { ...s.settings, sprints: undated } }, NOW);
     expect(r.moves.length).toBeGreaterThan(0);
@@ -914,16 +1060,16 @@ describe("release dates and feature freeze", () => {
   });
 
   it("explains when everything is already scheduled", () => {
-    const s = freshStore();
+    const s = readyStore();
     const tickets = s.tickets.map((t, i) => ({ ...t, sprint: i % 2 ? "v0.23" : "v0.24" }));
     const r = optimizePlan({ ...s, tickets }, NOW);
     expect(r.moves).toEqual([]);
     expect(r.candidates).toBe(0);
-    expect(explainPlan(r)).toMatch(/no open ticket is unscheduled/);
+    expect(explainPlan(r)).toMatch(/no ready ticket is unscheduled/);
   });
 
   it("can fill in missing release dates on a cadence, oldest version first", () => {
-    const s = freshStore();
+    const s = readyStore();
     const undated = { ...s, settings: {
       ...s.settings,
       sprints: s.settings.sprints.map((sp) => ({ ...sp, freeze: null, release: null })),

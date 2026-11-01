@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { type Ticket, STATES, derive, isOpen, matchProjects } from "./schema";
+import { type Ticket, STATES, derive, isOpen, matchProjects, priorityLabel } from "./schema";
 import { type Store, projectUsage } from "./store";
 
 /** Project view: pick a project, see every ticket on it, grouped by state. */
@@ -141,7 +141,7 @@ export default function Projects({ store, onEdit, onAddProject, onRemoveProject 
                     <td className="mono">{String(d.id).padStart(2, "0")}</td>
                     <td>{d.name}</td>
                     <td>{d.projects.map((p) => <span className="chip mini" key={p}>{p}</span>)}</td>
-                    <td className={d.priority === "Critical" ? "tag Decline" : ""}>{d.priority}</td>
+                    <td className={d.priority === "Critical" ? "tag Decline" : ""}>{priorityLabel(d.priority)}</td>
                     <td className="dim">{d.type ?? "—"}</td>
                     <td>{d.dueDate ?? "—"}</td>
                     <td>{d.sprint ?? "—"}</td>

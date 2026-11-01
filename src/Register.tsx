@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  type DerivedTicket, type Ticket, CATEGORIES, derive, externalLabel, PRIORITIES, STATES,
+  type DerivedTicket, type Ticket, CATEGORIES, derive, externalLabel, PRIORITIES, STATES, priorityLabel, priorityRank,
 } from "./schema";
 import type { Store } from "./store";
 
@@ -19,7 +19,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
     const list: DerivedTicket[] = store.tickets
       .map((t) => derive(t, store.settings))
       .filter((t) => (stateFilter ? t.state === stateFilter : true))
-      .filter((t) => (priorityFilter ? t.priority === priorityFilter : true))
+      .filter((t) => (!priorityFilter ? true : priorityFilter === "__none__" ? t.priority === null : t.priority === priorityFilter))
       .filter((t) => {
         if (!categoryFilter) return true;
         // "unset" is a real answer here — those are the ones the audit is asking about
@@ -31,6 +31,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
           .join(" ").toLowerCase().includes(needle));
     const dir = sort === "score" ? -1 : 1;
     return list.sort((a, b) => {
+      if (sort === "priority") return priorityRank(a.priority) - priorityRank(b.priority);
       const x = (a[sort] ?? 0) as number | string;
       const y = (b[sort] ?? 0) as number | string;
       if (typeof x === "number" && typeof y === "number") return (x - y) * dir;
@@ -56,6 +57,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
         <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
           <option value="">any priority</option>
           {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+          <option value="__none__">not chosen</option>
         </select>
         <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
           <option value="">any type</option>
@@ -73,7 +75,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
             {th("priority", "Priority")}
             {th("type", "Type")}
             {th("state", "State")}
-            {th("sprint", "Sprint")}
+            {th("sprint", "Ships in")}
             {th("daysToDue", "Due")}
             {th("ageDays", "Waited")}
             {th("score", "Score")}
@@ -87,11 +89,11 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
               <td className="mono">{String(t.id).padStart(2, "0")}</td>
               <td>{t.name}</td>
               <td>{t.projects.map((p) => <span className="chip mini" key={p}>{p}</span>)}</td>
-              <td className={t.priority === "Critical" ? "tag Decline" : ""}>{t.priority}</td>
+              <td className={t.priority === "Critical" ? "tag Decline" : ""}>{priorityLabel(t.priority)}</td>
               <td className="dim">{t.type ?? "—"}</td>
               <td>{t.state}</td>
               <td>{t.sprint ?? "—"}</td>
-              <td>{t.dueDate ? `${t.dueDate} (${t.daysToDue! < 0 ? `${-t.daysToDue!}d late` : `${t.daysToDue}d`})` : "—"}</td>
+              <td>{t.dueDate ? `${t.dueDate} (${t.daysToDue! < 0 ? `${-t.daysToDue!}d late` : `${t.daysToDue}d`})` : t.noHardDate ? "no hard date" : "—"}</td>
               <td>{t.waitedLabel}</td>
               <td className="mono">{t.score}</td>
               <td>{t.flags.map((f) => <span className="chip mini flag" key={f}>{f}</span>)}</td>

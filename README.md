@@ -99,12 +99,15 @@ current register, so the history stays small however many tickets there are.
 
 ## The screens
 
-    Triage     One undecided ask at a time. Accept, defer, decline, or hand back.
-               Work that was deferred and has come back leads the queue.
-    Review     An audit pass over every ask: data missing where its absence has a
-               consequence, and work going quietly wrong.
-    Sprints    Release columns. Drag work between them; auto-optimize proposes and
-               states its reasoning, including when it proposes nothing.
+    Plan       Three steps, each a queue that empties. The header counts them.
+               1 Fill out   one ticket at a time: its missing priority, type,
+                            estimate or due date are edited on the card. Filling
+                            the last one accepts it. Decline, defer and block live
+                            here; deferred and blocked work comes back first.
+               2 Schedule   the release board. Ready work on the left; drag it into
+                            a release, or let auto-optimize propose and explain.
+               3 Check      what is going wrong per release, and close-out for
+                            releases that shipped with work still open.
     Projects   Tickets by project. The project list is managed here.
     Register   Everything, filterable and sortable.
     Decisions  What was decided, exportable as markdown, CSV or JSON.
@@ -113,10 +116,17 @@ current register, so the history stays small however many tickets there are.
 ## Conventions worth knowing
 
 - **The unit is the ask**, not the project. A project is a tag on the ask.
+- **Blank until chosen.** Priority, type, estimate and due date start unset, and
+  "no hard date" is a choice of its own. A default never stands in for a decision.
+- **Ready to schedule** means priority, type, estimate, and a date or no hard date.
+  Project, summary and stakeholders are nudges, never gates.
 - **Every stored field must drive** a decision, a flag, a score term or a view.
   Fields that only restate other data are derived on read instead.
-- **Capacity is measured in work units** (the ticket's estimate), not ticket count.
-  A release is full when its load reaches capacity.
+- **Work spans releases.** A ticket stores the release it ships in; an estimate of
+  N sprints occupies the N releases ending there, in ship-date order, and costs one
+  unit in each. A release is full when its load reaches capacity.
+- **The current release is derived**: the earliest that has neither shipped nor
+  frozen. Nothing stores it.
 - **Deferred work returns on Mondays**, so revisits arrive as one batch with the
   weekly triage rather than trickling in daily.
 - **Exceeding capacity and scope-after-freeze are reported, not blocked.** Blocking
@@ -129,9 +139,6 @@ current register, so the history stays small however many tickets there are.
 
 - The project view's switcher is still one chip per project, and projects cannot be
   renamed. See `openspec/changes/projects-page`.
-- Nothing ever reaches Done, Blocked has no way back, and the triage capacity
-  meter counts decisions while capacity everywhere else counts work units. The
-  fix is one planning workflow: see `openspec/changes/plan-workflow`.
 
 ## License
 

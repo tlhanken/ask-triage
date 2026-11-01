@@ -1,15 +1,20 @@
 import { useState, type DragEvent, type ReactNode } from "react";
 import {
-  type Ticket, backlog, daysSince, daysToRelease, derive, fillState, findSprint, hasShipped, inSprint,
-  isFrozen, isOpen,
+  type Ticket, beingWorkedOn, daysSince, daysToRelease, derive, estimateLabel, fillState, findSprint,
+  hasShipped, isFrozen, isOpen, isReady, priorityLabel, spanOf, startsTooLate,
 } from "./schema";
-import { type Move, type OptimizeResult, type Store, explainPlan, optimizePlan, slippedIn } from "./store";
+import {
+  type Move, type OptimizeResult, type Store, explainPlan, optimizePlan, scheduleQueue, slippedIn, spanLabel,
+} from "./store";
 
-/** Release board: backlog on the left, then releases newest-first.
+/** Schedule: ready work on the left, then the releases in the owner's display order.
+ *  A card sits where its ticket ships; earlier releases it spans show a slim row.
  *  Cards drag between columns; the stored order is the display order. */
 
 interface Props {
   store: Store;
+  /** Highlighted by j/k in the ready column. */
+  focusId: number | null;
   onEdit: (t: Ticket) => void;
   onMove: (id: number, sprint: string | null) => void;
   onAddSprint: (name: string) => void;
@@ -20,8 +25,8 @@ interface Props {
   onFillDates: () => void;
 }
 
-export default function Sprints({
-  store, onEdit, onMove, onAddSprint, onRemoveSprint, onShiftSprint, onApplyPlan, onEditSprint,
+export default function Schedule({
+  store, focusId, onEdit, onMove, onAddSprint, onRemoveSprint, onShiftSprint, onApplyPlan, onEditSprint,
   onFillDates,
 }: Props) {
   const [dragging, setDragging] = useState<number | null>(null);
@@ -31,7 +36,7 @@ export default function Sprints({
   const why = plan ? explainPlan(plan) : "";
 
   const open = store.tickets.filter(isOpen);
-  const backlogTickets = backlog(store.tickets);
+  const ready = scheduleQueue(store);
   const target = store.settings.commitTargetPerSprint;
   const releases = store.settings.sprints;
 
@@ -65,7 +70,7 @@ export default function Sprints({
     <div>
       <div className="toolbar">
         <span className="dim small">
-          {releases.length} releases · {open.length} open · {backlogTickets.length} unscheduled ·
+          {releases.length} releases · {open.length} open · {ready.length} ready to schedule ·
           {" "}drag a card between columns · click a release name for its dates
         </span>
         <div className="spacer" />
@@ -98,7 +103,7 @@ export default function Sprints({
             <b>Proposed releases</b>
             <span className="dim small">
               {plan.moves.length} move{plan.moves.length === 1 ? "" : "s"} · nothing moves until you
-              apply · skips frozen and shipped releases, and work already scheduled
+              apply · places only ready work, never into a shipped or frozen release
             </span>
             <div className="spacer" />
             {plan.moves.length > 0 && (
@@ -142,26 +147,29 @@ export default function Sprints({
 
       <div className="board">
         <Column
-          title="Backlog"
-          subtitle={`${backlogTickets.length} unscheduled`}
+          title="Ready to schedule"
+          subtitle={`${ready.length} ready, by priority`}
           dates={null}
-          tickets={[...backlogTickets].sort(byScore)}
+          tickets={ready}
+          continuing={[]}
+          focusId={focusId}
           store={store}
           onEdit={onEdit}
           onMove={move}
           onRemove={null}
           onShift={null}
-          isOver={over === "Backlog"}
-          onDragOverColumn={() => setOver("Backlog")}
-          onDragLeaveColumn={() => setOver((c) => (c === "Backlog" ? null : c))}
+          isOver={over === "Ready"}
+          onDragOverColumn={() => setOver("Ready")}
+          onDragLeaveColumn={() => setOver((c) => (c === "Ready" ? null : c))}
           onDropColumn={drop(null)}
           draggingId={dragging}
           onCardDragStart={setDragging}
           onCardDragEnd={() => { setDragging(null); setOver(null); }}
         />
         {releases.map((sp, i) => {
-          const ts = inSprint(store.tickets, sp.name).filter(isOpen);
-          const { load, room, state } = fillState(store.tickets, sp.name, target);
+          const ts = open.filter((t) => t.sprint === sp.name);
+          const continuing = open.filter((t) => t.sprint !== sp.name && spanOf(t, store.settings).releases.includes(sp.name));
+          const { load, room, state } = fillState(store.tickets, sp.name, store.settings);
           const frozen = isFrozen(sp);
           const shipped = hasShipped(sp);
           const toRelease = daysToRelease(sp);
@@ -192,6 +200,8 @@ export default function Sprints({
               }
               over={state !== "room"}
               tickets={[...ts].sort(byScore)}
+              continuing={continuing}
+              focusId={null}
               store={store}
               onEdit={onEdit}
               onMove={move}
@@ -216,14 +226,17 @@ export default function Sprints({
 }
 
 function Column({
-  title, subtitle, dates, tickets, store, onEdit, onMove, over, onRemove, onEditSprint, onShift,
-  canLeft, canRight, isOver, onDragOverColumn, onDragLeaveColumn, onDropColumn, draggingId,
+  title, subtitle, dates, tickets, continuing, focusId, store, onEdit, onMove, over, onRemove, onEditSprint,
+  onShift, canLeft, canRight, isOver, onDragOverColumn, onDragLeaveColumn, onDropColumn, draggingId,
   onCardDragStart, onCardDragEnd,
 }: {
   title: string;
   subtitle: string;
   dates: ReactNode;
   tickets: Ticket[];
+  /** Tickets that span this release but ship later: shown as slim rows. */
+  continuing: Ticket[];
+  focusId: number | null;
   store: Store;
   onEdit: (t: Ticket) => void;
   onMove: (id: number, sprint: string | null) => void;
@@ -267,11 +280,18 @@ function Column({
         onDragLeave={onDragLeaveColumn}
         onDrop={onDropColumn}
       >
+        {continuing.map((t) => (
+          <button key={`c${t.id}`} className="tcont small" onClick={() => onEdit(t)}
+                  title={`${t.name} — spans ${spanLabel(t, store.settings)}`}>
+            {t.name} <span className="dim">continuing → {t.sprint}</span>
+          </button>
+        ))}
         {tickets.map((t) => {
           const d = derive(t, store.settings);
+          const span = spanLabel(t, store.settings);
           return (
             <div
-              className={"tcard" + (draggingId === t.id ? " dragging" : "")}
+              className={"tcard" + (draggingId === t.id ? " dragging" : "") + (focusId === t.id ? " focus" : "")}
               key={t.id}
               draggable
               onDragStart={(e) => {
@@ -284,12 +304,22 @@ function Column({
               <button className="tname" onClick={() => onEdit(t)}>{d.name}</button>
               <div className="chips small">
                 {d.projects.map((p) => <span className="chip mini" key={p}>{p}</span>)}
-                <span className={"chip mini " + (d.priority === "Critical" ? "crit" : "")}>{d.priority}</span>
+                <span className={"chip mini " + (d.priority === "Critical" ? "crit" : "")}>{priorityLabel(d.priority)}</span>
                 {d.type && <span className="chip mini">{d.type}</span>}
+                <span className="chip mini">{estimateLabel(d.estimate)}</span>
+                {!isReady(t) && <span className="chip mini flag">not filled out</span>}
               </div>
               <div className="small dim">
-                {d.dueDate ? `due ${d.dueDate}` : "no date"} · score {d.score}
+                {d.dueDate ? `due ${d.dueDate}` : d.noHardDate ? "no hard date" : "no date yet"} · score {d.score}
+                {t.sprint && span.includes("–") && <> · spans {span}</>}
               </div>
+              {t.sprint && (beingWorkedOn(t, store.settings) || startsTooLate(t, store.settings) || d.shipsLate) && (
+                <div className="chips small">
+                  {beingWorkedOn(t, store.settings) && <span className="chip mini">being worked on</span>}
+                  {startsTooLate(t, store.settings) && <span className="chip mini flag">starts too late</span>}
+                  {d.shipsLate && <span className="chip mini flag">ships after due</span>}
+                </div>
+              )}
               {d.flags.length > 0 && (
                 <div className="chips small">
                   {d.flags.map((f) => <span className="chip mini flag" key={f}>{f}</span>)}
@@ -297,7 +327,7 @@ function Column({
               )}
               <select value={t.sprint ?? ""} onChange={(e) => onMove(t.id, e.target.value || null)}
                       aria-label={`release for ${d.name}`}>
-                <option value="">backlog</option>
+                <option value="">not scheduled</option>
                 {store.settings.sprints.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
               </select>
             </div>

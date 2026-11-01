@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import { DEFAULT_PROJECTS, derive, revisitInWeeks } from "./schema";
-import { freshStore, load, undecided } from "./store";
+import { type Store, fillOutQueue, freshStore, load, moveTicketToSprint, serialize } from "./store";
+import { STORAGE_KEY, readyStore } from "./test-fixtures";
 
 // Freeze the date so the seed, the release dates and "today" never drift apart.
 // Only Date is faked; timers stay real so React and the autosave debounce run.
@@ -19,35 +20,49 @@ const cols = () => Array.from(document.querySelectorAll(".col"));
 const colTitle = (c: Element) =>
   (c.querySelector(".col-name") ?? c.querySelector(".col-head b"))?.textContent;
 const colByTitle = (title: string) => cols().find((c) => colTitle(c) === title);
+const READY = "Ready to schedule";
 
-describe("triage loop", () => {
-  it("renders the top ticket with its decision context pre-loaded", () => {
+/** Start the app from a given register, as if it had been saved in this browser. */
+const startWith = (s: Store) => { localStorage.setItem(STORAGE_KEY, serialize(s)); render(<App />); };
+const toStep = (name: RegExp) => fireEvent.click(screen.getByRole("button", { name }));
+/** The Schedule step, starting from a filled-out register. */
+const openSchedule = (s: Store = readyStore()) => { startWith(s); toStep(/Schedule/); };
+
+describe("plan: fill out", () => {
+  it("opens on Plan, and the header counts the pipeline", () => {
     render(<App />);
     expect(screen.getByText("Priority tracker")).toBeTruthy();
-    const h2 = screen.getByRole("heading", { level: 2 }).textContent ?? "";
-    expect(h2).toMatch(/^TKT-\d\d · /);
-    expect(screen.getByText(/Committed this sprint/)).toBeTruthy();
-    expect(screen.getByText(/Summary/)).toBeTruthy();
-    expect(screen.getByText(/Who's waiting/)).toBeTruthy();
+    expect(screen.getAllByRole("button").filter((b) => b.closest("nav.tabs")).map((b) => b.textContent))
+      .toEqual(["Plan", "Projects", "Register", "Decisions", "History"]);
+    const n = freshStore().tickets.length;
+    expect(screen.getByLabelText("Pipeline").textContent).toContain(`${n} to fill out · 0 to schedule`);
   });
 
-  it("orders the queue by draft score, highest first", () => {
+  it("shows the top ticket with what it still needs, and why", () => {
     const store = freshStore();
-    const queue = undecided(store);
-    const top = queue[0];
-    const scores = queue.map((t) => derive(t, store.settings).score);
-    expect(derive(top, store.settings).score).toBe(Math.max(...scores));
-
+    const top = fillOutQueue(store)[0].ticket;
+    expect(derive(top, store.settings).score)
+      .toBe(Math.max(...fillOutQueue(store).map((x) => derive(x.ticket, store.settings).score)));
     render(<App />);
-    expect(screen.getByRole("heading", { level: 2 }).textContent)
-      .toContain(`TKT-${String(top.id).padStart(2, "0")}`);
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain(`TKT-${String(top.id).padStart(2, "0")}`);
+    expect(screen.getByText(/Needed before it can be scheduled/)).toBeTruthy();
+    expect(screen.getByLabelText(/Estimate/)).toBeTruthy();
+    expect(screen.getByText(/cannot be given a span/)).toBeTruthy();
   });
 
-  it("accepting fills the capacity meter and advances the queue", () => {
-    render(<App />);
-    expect(screen.getByText(/Committed this sprint/).textContent).toContain("0 of 8");
-    fireEvent.click(screen.getByRole("button", { name: /accept into/i }));
-    expect(screen.getByText(/Committed this sprint/).textContent).toContain("1 of 8");
+  it("filling the last field on the card moves the ticket to Schedule", () => {
+    const s = freshStore();
+    // one ticket missing only its estimate
+    const t = { ...s.tickets[0], priority: "Critical" as const, type: "Server" as const, noHardDate: true, dueDate: null };
+    startWith({ ...s, tickets: [t] });
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain(t.name);
+    const est = screen.getByLabelText(/Estimate/);
+    fireEvent.change(est, { target: { value: "2" } });
+    fireEvent.keyDown(est, { key: "Enter" });
+    expect(screen.getByText(/Nothing to fill out/)).toBeTruthy();
+    expect(screen.getByLabelText("Pipeline").textContent).toContain("0 to fill out · 1 to schedule");
+    toStep(/Schedule/);
+    expect(colByTitle(READY)!.textContent).toContain(t.name);
   });
 
   it("deferring captures a reason and a weekly revisit date", () => {
@@ -62,71 +77,108 @@ describe("triage loop", () => {
     expect(screen.getAllByText(new RegExp(`revisit ${revisitInWeeks(1)}`)).length).toBeGreaterThan(0);
   });
 
-  it("undo rolls the last decision back out of the queue", () => {
+  it("has no undo key: a decision is undone from History", () => {
     render(<App />);
     const first = screen.getByRole("heading", { level: 2 }).textContent;
-    fireEvent.click(screen.getByRole("button", { name: /accept into/i }));
+    expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /decline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /record decline/i }));
     expect(screen.getByRole("heading", { level: 2 }).textContent).not.toBe(first);
-    fireEvent.click(screen.getByRole("button", { name: /undo/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /revert to here/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /^Plan$/ }));
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(first);
+  });
+
+  it("j and k step through the queue without changing anything", () => {
+    render(<App />);
+    expect(screen.getByText(/^1 of \d+/)).toBeTruthy();
+    fireEvent.keyDown(window, { key: "j" });
+    expect(screen.getByText(/^2 of \d+/)).toBeTruthy();
+    fireEvent.keyDown(window, { key: "k" });
+    expect(screen.getByText(/^1 of \d+/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    expect(screen.getByText(/Nothing recorded yet/)).toBeTruthy();
   });
 });
 
-describe("sprint board", () => {
-  it("shows the backlog, then sprints newest-release first", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    expect(cols().map(colTitle)).toEqual(["Backlog", "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
+describe("plan: schedule", () => {
+  it("shows ready work, then releases newest first", () => {
+    openSchedule();
+    expect(cols().map(colTitle)).toEqual([READY, "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
   });
 
-  it("sprint columns can be reordered with the arrows", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+  it("release columns can be reordered with the arrows", () => {
+    openSchedule();
     fireEvent.click(screen.getByRole("button", { name: "move v0.23 left" }));
-    expect(cols().map(colTitle)).toEqual(["Backlog", "v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
+    expect(cols().map(colTitle)).toEqual([READY, "v0.25", "v0.23", "v0.24", "v0.22", "v0.21"]);
     fireEvent.click(screen.getByRole("button", { name: "move v0.23 right" }));
-    expect(cols().map(colTitle)).toEqual(["Backlog", "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
+    expect(cols().map(colTitle)).toEqual([READY, "v0.25", "v0.24", "v0.23", "v0.22", "v0.21"]);
   });
 
-  it("moving a ticket with the column selector moves it between sprints", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    const card = colByTitle("Backlog")!.querySelector(".tcard")!;
+  it("moving a ticket with the column selector moves it between releases", () => {
+    openSchedule();
+    const card = colByTitle(READY)!.querySelector(".tcard")!;
     const name = card.querySelector(".tname")!.textContent!;
     fireEvent.change(card.querySelector("select")!, { target: { value: "v0.24" } });
     expect(colByTitle("v0.24")!.textContent).toContain(name);
-    expect(colByTitle("Backlog")!.textContent).not.toContain(name);
+    expect(colByTitle(READY)!.textContent).not.toContain(name);
   });
 
-  it("adding a sprint adds its column", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+  it("shows a multi-sprint ticket in every release it spans", () => {
+    const s = moveTicketToSprint(readyStore(2), 1, "v0.25");
+    openSchedule(s);
+    const name = s.tickets.find((t) => t.id === 1)!.name;
+    expect(colByTitle("v0.25")!.querySelector(".tcard")!.textContent).toContain(name);
+    expect(colByTitle("v0.24")!.querySelector(".tcont")!.textContent).toMatch(/continuing → v0.25/);
+    expect(colByTitle("v0.24")!.textContent).toMatch(/1\/8 units/);
+  });
+
+  it("adding a release adds its column", () => {
+    openSchedule();
     fireEvent.change(screen.getByPlaceholderText(/add release/i), { target: { value: "v0.26" } });
     fireEvent.submit(screen.getByPlaceholderText(/add release/i).closest("form")!);
     expect(colByTitle("v0.26")).toBeTruthy();
   });
 });
 
-describe("review sweep", () => {
-  it("steps through the tickets and reports what to look at", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Review$/ }));
-    expect(screen.getByText(/with something to look at/)).toBeTruthy();
-    expect(screen.getByText(/^1 of \d+$/)).toBeTruthy();
+describe("plan: check", () => {
+  /** Three tickets shipping in v0.22, which shipped the day the clock is frozen at. */
+  const shipped = () => {
+    let s = readyStore();
+    for (const id of [1, 2, 3]) s = moveTicketToSprint(s, id, "v0.22");
+    return s;
+  };
 
-    fireEvent.click(screen.getByRole("button", { name: /next →/ }));
-    expect(screen.getByText(/^2 of \d+$/)).toBeTruthy();
+  it("asks about each ticket left in a shipped release, with nothing pre-selected", () => {
+    startWith(shipped());
+    toStep(/Check/);
+    const region = screen.getByRole("region", { name: "Release close-out" });
+    const radios = within(region).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios).toHaveLength(9);
+    expect(radios.some((r) => r.checked)).toBe(false);
+    expect(within(region).getByRole("button", { name: /Apply 0 choices/ })).toHaveProperty("disabled", true);
   });
 
-  it("can jump to the next ticket with something wrong, and edit it", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Review$/ }));
-    fireEvent.click(screen.getByRole("button", { name: /next flagged/i }));
-    // the worst ticket is shown first, so it has at least one alert explained
-    expect(screen.getByRole("button", { name: /Edit ticket/ })).toBeTruthy();
+  it("applies the choices made and keeps the undecided", () => {
+    startWith(shipped());
+    toStep(/Check/);
+    const region = () => screen.getByRole("region", { name: "Release close-out" });
+    const [first, second] = within(region()).getAllByRole("group");
+    fireEvent.click(within(first).getByLabelText("Done"));
+    fireEvent.click(within(second).getByLabelText(/Carry over to v0.23/));
+    fireEvent.click(within(region()).getByRole("button", { name: /Apply 2 choices/ }));
+    expect(within(region()).getAllByRole("group")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    expect(screen.getByText("close out 2 tickets")).toBeTruthy();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: /Edit ticket/ }));
-    expect(screen.getByRole("dialog", { name: /Edit ticket/ })).toBeTruthy();
+  it("reports risks with the reason they matter", () => {
+    const s = moveTicketToSprint(readyStore(3), 1, "v0.23");      // would have had to start in v0.21
+    startWith(s);
+    toStep(/Check/);
+    expect(screen.getByText("Starts too late")).toBeTruthy();
+    expect(screen.getByText(/would have had to start in v0.21/)).toBeTruthy();
   });
 });
 
@@ -293,7 +345,7 @@ describe("editing in the browser", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /^Register$/ }));
     const head = screen.getAllByRole("row")[0].textContent ?? "";
-    for (const col of ["TKT", "Name", "Projects", "State", "Sprint", "Due", "Score", "Ticket"]) {
+    for (const col of ["TKT", "Name", "Projects", "State", "Ships in", "Due", "Score", "Ticket"]) {
       expect(head).toContain(col);
     }
   });
@@ -302,47 +354,45 @@ describe("editing in the browser", () => {
 describe("export path for updates", () => {
   it("offers summary, project, and file exports", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /accept into/i }));
+    fireEvent.click(screen.getByRole("button", { name: /decline/i }));
+    fireEvent.click(screen.getByRole("button", { name: /record decline/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Decisions$/ }));
     expect(screen.getByRole("button", { name: /copy summary/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /by project/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /download \.csv/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /save as pdf/i })).toBeTruthy();
-    expect(screen.getAllByText(/Accepted this sprint/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Declined — won't do/).length).toBeGreaterThan(0);
   });
 });
 
 describe("board interaction", () => {
   it("drags a ticket between release columns", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    const card = colByTitle("Backlog")!.querySelector(".tcard")!;
+    openSchedule();
+    const card = colByTitle(READY)!.querySelector(".tcard")!;
     const name = card.querySelector(".tname")!.textContent!;
     fireEvent.dragStart(card);
     const target = colByTitle("v0.24")!.querySelector(".col-body")!;
     fireEvent.dragOver(target);
     fireEvent.drop(target);
     expect(colByTitle("v0.24")!.textContent).toContain(name);
-    expect(colByTitle("Backlog")!.textContent).not.toContain(name);
+    expect(colByTitle(READY)!.textContent).not.toContain(name);
   });
 
   it("drags a ticket back to the backlog", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    const card = colByTitle("Backlog")!.querySelector(".tcard")!;
+    openSchedule();
+    const card = colByTitle(READY)!.querySelector(".tcard")!;
     const name = card.querySelector(".tname")!.textContent!;
     fireEvent.dragStart(card);
     fireEvent.drop(colByTitle("v0.25")!.querySelector(".col-body")!);
     expect(colByTitle("v0.25")!.textContent).toContain(name);
     const moved = colByTitle("v0.25")!.querySelector(".tcard")!;
     fireEvent.dragStart(moved);
-    fireEvent.drop(colByTitle("Backlog")!.querySelector(".col-body")!);
-    expect(colByTitle("Backlog")!.textContent).toContain(name);
+    fireEvent.drop(colByTitle(READY)!.querySelector(".col-body")!);
+    expect(colByTitle(READY)!.textContent).toContain(name);
   });
 
   it("auto-optimize previews the moves and only applies on Apply", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    openSchedule();
     fireEvent.click(screen.getByRole("button", { name: /auto-optimize/i }));
     expect(screen.getByText(/Proposed releases/)).toBeTruthy();
     // nothing has moved yet
@@ -353,8 +403,7 @@ describe("board interaction", () => {
   });
 
   it("discarding the preview changes nothing", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    openSchedule();
     fireEvent.click(screen.getByRole("button", { name: /auto-optimize/i }));
     fireEvent.click(screen.getByRole("button", { name: /^Discard$/ }));
     expect(colByTitle("v0.23")!.querySelectorAll(".tcard")).toHaveLength(0);
@@ -363,16 +412,14 @@ describe("board interaction", () => {
 
 describe("release dates and freeze", () => {
   it("shows each release's freeze and ship dates on the board", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    openSchedule();
     const col = colByTitle("v0.23")!.textContent ?? "";
     expect(col).toMatch(/freeze \d{4}-\d{2}-\d{2}/);
     expect(col).toMatch(/ships \d{4}-\d{2}-\d{2}/);
   });
 
   it("edits a release's dates from the column", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    openSchedule();
     fireEvent.click(screen.getByRole("button", { name: "v0.24" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
 
@@ -382,8 +429,7 @@ describe("release dates and freeze", () => {
   });
 
   it("warns about scope after freeze but still allows it", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    openSchedule();
 
     // freeze v0.24 by hand, then drag something into it
     fireEvent.click(screen.getByRole("button", { name: "v0.24" }));
@@ -391,7 +437,7 @@ describe("release dates and freeze", () => {
     fireEvent.click(screen.getByRole("button", { name: /save dates/i }));
     expect(colByTitle("v0.24")!.textContent).toContain("frozen");
 
-    const card = colByTitle("Backlog")!.querySelector(".tcard")!;
+    const card = colByTitle(READY)!.querySelector(".tcard")!;
     const name = card.querySelector(".tname")!.textContent!;
     fireEvent.dragStart(card);
     fireEvent.drop(colByTitle("v0.24")!.querySelector(".col-body")!);
@@ -402,8 +448,7 @@ describe("release dates and freeze", () => {
   });
 
   it("refuses a freeze date that lands after the release date", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
+    openSchedule();
     fireEvent.click(screen.getByRole("button", { name: "v0.24" }));
     fireEvent.change(screen.getByLabelText("Feature freeze"), { target: { value: "2030-01-01" } });
     expect(screen.getByText(/freeze is after the release date/i)).toBeTruthy();
@@ -412,9 +457,8 @@ describe("release dates and freeze", () => {
 
 describe("history tab", () => {
   it("records a labelled change and reverts it", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    const card = colByTitle("Backlog")!.querySelector(".tcard")!;
+    openSchedule();
+    const card = colByTitle(READY)!.querySelector(".tcard")!;
     const name = card.querySelector(".tname")!.textContent!;
     fireEvent.change(card.querySelector("select")!, { target: { value: "v0.22" } });
     expect(colByTitle("v0.22")!.textContent).toContain(name);
@@ -423,8 +467,8 @@ describe("history tab", () => {
     expect(screen.getByText(/move \d+ to v0\.22/)).toBeTruthy();
 
     fireEvent.click(screen.getAllByRole("button", { name: /revert to here/i })[0]);
-    fireEvent.click(screen.getByRole("button", { name: /^Sprints$/ }));
-    expect(colByTitle("Backlog")!.textContent).toContain(name);
+    fireEvent.click(screen.getByRole("button", { name: /^Plan$/ }));
+    expect(colByTitle(READY)!.textContent).toContain(name);
     expect(colByTitle("v0.22")!.querySelectorAll(".tcard")).toHaveLength(0);
   });
 

@@ -67,15 +67,14 @@ export function matchProjects<T extends string>(
  * Priority is how much this matters. It was called `type`, which never said what
  * it meant.
  *
- * "Unclassified" is the default and is also the Backlog marker: a ticket with no
- * priority cannot be sorted into a priority column, so the absence of a choice is
- * what puts it in the backlog.
+ * A ticket's priority is null until someone chooses one: a default would stand in
+ * for a decision nobody made. "Unclassified" is only how null is shown.
  */
-export const PRIORITIES = ["Unclassified", "Critical", "Should", "Nice-to-have"] as const;
+export const PRIORITIES = ["Critical", "Should", "Nice-to-have"] as const;
 export type Priority = (typeof PRIORITIES)[number];
-export const DEFAULT_PRIORITY: Priority = "Unclassified";
-/** The ones a person actually picks. Unclassified is the absence of a choice, not a choice. */
-export const CLASSIFIABLE_PRIORITIES = ["Critical", "Should", "Nice-to-have"] as const;
+export const priorityLabel = (p: Priority | null): string => p ?? "Unclassified";
+/** Sort rank: Critical first, unset last. */
+export const priorityRank = (p: Priority | null): number => (p === null ? PRIORITIES.length : PRIORITIES.indexOf(p));
 
 /**
  * Type is which part of the system the work sits in — a different axis from
@@ -85,29 +84,26 @@ export const CLASSIFIABLE_PRIORITIES = ["Critical", "Should", "Nice-to-have"] as
 export const CATEGORIES = ["Front-end", "Back-end", "Driver", "Server"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
-/** How long it is expected to take, in sprints. 3 reads as "three or more". */
-export const ESTIMATES = [1, 2, 3] as const;
-export type Estimate = (typeof ESTIMATES)[number];
+/** How long it is expected to take: a whole number of sprints, or null until decided. */
+export const isEstimate = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1;
 
-export const estimateLabel = (n: Estimate): string =>
-  n >= 3 ? "3+ sprints" : `${n} sprint${n === 1 ? "" : "s"}`;
+export const estimateLabel = (n: number | null): string =>
+  n === null ? "no estimate" : `${n} sprint${n === 1 ? "" : "s"}`;
 
-export const STATES = [
-  "New",
-  "Accepted-Backlog",
-  "Committed",
-  "In Progress",
-  "Blocked",
-  "Deferred",
-  "Won't Do",
-  "Done",
-] as const;
+/**
+ * Open work is New (no release) or Committed (has a ship release). Blocked and
+ * Deferred come back on a revisit day. "In progress" is not stored: it is derived
+ * from the release order (see beingWorkedOn).
+ */
+export const STATES = ["New", "Committed", "Blocked", "Deferred", "Won't Do", "Done"] as const;
 export type State = (typeof STATES)[number];
 
 export const FLAGS = ["UNPLANNED", "DATE-RISK", "SLIPPED", "STALE", "NO-DATE-OLD"] as const;
 export type Flag = (typeof FLAGS)[number];
 
-export const DECISIONS = ["Accept", "Defer", "Decline", "Block"] as const;
+/** Accept is recorded when Fill out finishes a ticket, or returned work is taken on.
+ *  Done and Carry over come from release close-out; Unschedule is "back to backlog". */
+export const DECISIONS = ["Accept", "Defer", "Decline", "Block", "Done", "Carry over", "Unschedule"] as const;
 export type DecisionAction = (typeof DECISIONS)[number];
 
 export const CLOSED: State[] = ["Done", "Won't Do"];
@@ -117,9 +113,11 @@ export const CLOSED: State[] = ["Done", "Won't Do"];
  * is set by the app or the loop and is shown but never hand-entered. Anything
  * not in these lists does not belong on a ticket.
  */
-export const CORE_FIELDS = ["name", "summary", "projects", "externalUrl", "dueDate", "estimate"] as const;
-export const OPTIONAL_FIELDS = ["priority", "type", "stakeholders", "notes"] as const;
-export const BACKGROUND_FIELDS = ["state", "opened", "sprint", "carryovers", "lastTouched", "closed"] as const;
+export const CORE_FIELDS = [
+  "name", "summary", "projects", "externalUrl", "dueDate", "noHardDate", "estimate", "priority", "type",
+] as const;
+export const OPTIONAL_FIELDS = ["stakeholders", "notes"] as const;
+export const BACKGROUND_FIELDS = ["state", "opened", "sprint", "planned", "carryovers", "lastTouched", "closed"] as const;
 
 export interface Ticket {
   id: number;
@@ -129,19 +127,21 @@ export interface Ticket {
   summary: string;               // what it is / why it exists
   projects: ProjectId[];         // relevant projects, from the typesafe list
   externalUrl: string | null;    // external ticket link (its label is derived)
-  dueDate: string | null;        // ISO date; null = no hard date
-  estimate: Estimate;            // how many sprints of work this is
+  dueDate: string | null;        // ISO date; null = not answered, unless noHardDate
+  noHardDate: boolean;           // chosen: there is no date to hit. Cleared by setting a date
+  estimate: number | null;       // whole sprints of work; null = not estimated yet
+  priority: Priority | null;     // Critical / Should / Nice-to-have; null = not chosen
+  type: Category | null;         // Front-end / Back-end / Driver / Server; null = not known yet
 
   // ---- optional: available, never required
-  priority: Priority;            // Unclassified / Critical / Should / Nice-to-have
-  type: Category | null;         // Front-end / Back-end / Driver / Server; null = not known yet
   stakeholders: string[];        // who is told about it
   notes: string;                 // freeform context that has nowhere else to live
 
-  // ---- background metadata: set by the app or the triage loop
+  // ---- background metadata: set by the app
   state: State;
   opened: string | null;         // stamped on create
-  sprint: string | null;         // e.g. "v0.23"; set by the board or triage
+  sprint: string | null;         // the release it SHIPS in, e.g. "v0.24"; its span ends here
+  planned: string | null;        // day the ship release or estimate was last set by a person
   carryovers: number;            // bumped when a release ships without it
   lastTouched: string | null;    // stamped on every edit
   closed: string | null;         // stamped on Done / Won't Do
@@ -159,7 +159,6 @@ export interface Settings {
   commitTargetPerSprint: number;
   throughputPerWeek: number;
   intakePerWeek: number;
-  currentSprint: string;
   /** The controlled project list. Data, not a compile-time union. */
   projects: string[];
   sprints: Sprint[],             // the release columns, in display order
@@ -183,7 +182,6 @@ export const DEFAULT_SETTINGS: Settings = {
   commitTargetPerSprint: 8,
   throughputPerWeek: 5,
   intakePerWeek: 7.5,
-  currentSprint: "v0.23",
   projects: [...DEFAULT_PROJECTS],
   sprints: [],                   // freshStore() fills dated defaults; see defaultSprints()
   weights: {
@@ -207,8 +205,8 @@ export interface DerivedTicket extends Ticket {
   ageDays: number | null;
   daysToDue: number | null;
   waitedLabel: string;
-  /** True when the estimate cannot finish before the due date allows. */
-  overEstimate: boolean;
+  /** True when its ship release ships after its due date. */
+  shipsLate: boolean;
 }
 
 const MS_DAY = 86_400_000;
@@ -258,32 +256,64 @@ export function defaultSprints(now = new Date()): Sprint[] {
   }));
 }
 
-/** The release names in display order. Used by the tests; kept here as the accessor. */
-export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
+/** Version strings compared numerically: v0.9 before v0.21. */
+export function compareSprints(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true });
+}
 
 /**
- * A release's load, in WORK UNITS: the sum of its open tickets' estimates.
- *
- * Counting tickets instead treats a three-sprint ticket as equal to a
- * one-sprint ticket, which is how a release reads "8/8, at target" while
- * carrying triple the work. Capacity and estimates then speak the same unit,
- * in the same way the estimate already earns its place by being comparable to
- * a due date.
+ * Releases in the order they ship: by release date, then the undated ones in
+ * version order. This is the order spans count through and auto-optimize fills.
+ * It is NOT the board's display order, which the owner arranges.
  */
-export function loadUnits(tickets: Ticket[], release: string): number {
-  return tickets
-    .filter((t) => isOpen(t) && t.sprint === release)
-    .reduce((n, t) => n + t.estimate, 0);
+export function releaseOrder(sprints: Sprint[]): Sprint[] {
+  return [...sprints].sort((a, b) => {
+    if (a.release && b.release) return a.release.localeCompare(b.release) || compareSprints(a.name, b.name);
+    if (a.release) return -1;
+    if (b.release) return 1;
+    return compareSprints(a.name, b.name);
+  });
+}
+
+export interface Span {
+  /** The releases the ticket occupies, in ship order, ending where it ships. */
+  releases: string[];
+  /** How many more releases the estimate needs than exist before the ship release. */
+  short: number;
+}
+
+/**
+ * The releases a scheduled ticket occupies: as many as its estimate, ending at the
+ * one it ships in. A ticket with no estimate yet spans just its ship release.
+ */
+export function spanOf(t: Ticket, s: Settings): Span {
+  if (!t.sprint) return { releases: [], short: 0 };
+  const order = releaseOrder(s.sprints).map((x) => x.name);
+  const at = order.indexOf(t.sprint);
+  if (at < 0) return { releases: [], short: 0 };
+  const n = t.estimate ?? 1;
+  const start = at - n + 1;
+  return { releases: order.slice(Math.max(0, start), at + 1), short: Math.max(0, -start) };
+}
+
+/**
+ * A release's load, in WORK UNITS: one for each open ticket whose span includes it.
+ *
+ * A ticket that takes three sprints occupies three releases and costs one unit in
+ * each, rather than three units in the release it ships in and none before.
+ */
+export function loadUnits(tickets: Ticket[], release: string, s: Settings): number {
+  return tickets.filter((t) => isOpen(t) && spanOf(t, s).releases.includes(release)).length;
 }
 
 export type FillState = "room" | "full" | "over";
 
 /** How full a release is against its capacity, in work units. */
 export function fillState(
-  tickets: Ticket[], release: string, capacity: number,
+  tickets: Ticket[], release: string, s: Settings,
 ): { load: number; room: number; state: FillState } {
-  const load = loadUnits(tickets, release);
-  const room = capacity - load;
+  const load = loadUnits(tickets, release, s);
+  const room = s.commitTargetPerSprint - load;
   return { load, room, state: room < 0 ? "over" : room === 0 ? "full" : "room" };
 }
 
@@ -304,6 +334,42 @@ export const daysUntil = (isoDate: string | null | undefined, now = new Date()):
 
 export const daysToRelease = (sp: Sprint | undefined, now = new Date()): number | null =>
   daysUntil(sp?.release, now);
+
+/** The current release: the earliest, in ship order, that has neither shipped nor frozen. */
+export const currentRelease = (s: Settings, now = new Date()): Sprint | undefined =>
+  releaseOrder(s.sprints).find((sp) => !hasShipped(sp, now) && !isFrozen(sp, now));
+
+/** Its ship release ships after its due date. An undated release cannot be checked. */
+export function shipsLate(t: Ticket, s: Settings): boolean {
+  const sp = findSprint(s, t.sprint);
+  return !!(t.dueDate && sp?.release && sp.release > t.dueDate);
+}
+
+/**
+ * It would have had to start in a release that had already shipped when the plan
+ * was made — or before the first release there is.
+ *
+ * Judged as of `planned`, not today: once v0.23 ships, a ticket spanning
+ * v0.23–v0.24 has a shipped release in its span, and that is progress, not lateness.
+ */
+export function startsTooLate(t: Ticket, s: Settings): boolean {
+  if (!isOpen(t) || !t.sprint) return false;
+  const span = spanOf(t, s);
+  if (span.short > 0) return true;
+  const first = findSprint(s, span.releases[0] ?? null);
+  return !!(first && t.planned && hasShipped(first, parseDate(t.planned)));
+}
+
+/** Derived "in progress": its span has reached the current release, or it is due at close-out. */
+export function beingWorkedOn(t: Ticket, s: Settings, now = new Date()): boolean {
+  if (!isOpen(t) || !t.sprint) return false;
+  if (hasShipped(findSprint(s, t.sprint), now)) return true;
+  const cur = currentRelease(s, now);
+  if (!cur) return false;
+  const order = releaseOrder(s.sprints).map((x) => x.name);
+  const first = spanOf(t, s).releases[0];
+  return first !== undefined && order.indexOf(first) <= order.indexOf(cur.name);
+}
 
 /**
  * Deferred work comes back on ONE day a week, not on a spread of daily dates.
@@ -340,10 +406,6 @@ export function revisitIsDue(revisit: string | null | undefined, now = new Date(
 
 export const isOpen = (t: Ticket): boolean => !CLOSED.includes(t.state);
 
-export const backlog = (ts: Ticket[]): Ticket[] => ts.filter((t) => isOpen(t) && !t.sprint);
-
-export const inSprint = (ts: Ticket[], sprint: string): Ticket[] => ts.filter((t) => t.sprint === sprint);
-
 /** The label for an external link, derived rather than stored (e.g. "PX-118"). */
 export function externalLabel(url: string | null | undefined): string {
   if (!url) return "";
@@ -362,11 +424,11 @@ export function computeFlags(t: Ticket, s: Settings, now = new Date()): Flag[] {
   if (live && toDue !== null && toDue <= s.weights.dueRiskDays) out.push("DATE-RISK");
   if (live && t.carryovers >= s.weights.slippageThreshold) out.push("SLIPPED");
   if (live && t.lastTouched && daysSince(t.lastTouched, now)! > s.weights.staleDays) out.push("STALE");
-  if (live && age !== null && age > s.weights.noDateOldDays && !t.dueDate) out.push("NO-DATE-OLD");
+  if (live && age !== null && age > s.weights.noDateOldDays && !t.dueDate && !t.noHardDate) out.push("NO-DATE-OLD");
   return out;
 }
 
-/** What an audit looks for: data missing where it matters, and work going wrong. */
+/** An alert: what is wrong, and why it matters. Gaps are missing data; risks are work going wrong. */
 export type AlertSeverity = "gap" | "risk";
 
 export interface Alert {
@@ -377,31 +439,44 @@ export interface Alert {
   why: string;
 }
 
-/** The consequence of each contradiction flag, for the sweep to show. */
+/** The consequence of each contradiction flag, for Check to show. */
 const FLAG_WHY: Record<Flag, { what: string; why: (s: Settings) => string }> = {
   UNPLANNED: { what: "Unplanned", why: () => "Marked critical, but committed to no release." },
-  "DATE-RISK": { what: "Date risk", why: (s) => `Due within ${s.weights.dueRiskDays} days and not started.` },
+  "DATE-RISK": { what: "Date risk", why: (s) => `Due within ${s.weights.dueRiskDays} days.` },
   SLIPPED: { what: "Slipped", why: (s) => `Carried over ${s.weights.slippageThreshold} times already.` },
   STALE: { what: "Stale", why: (s) => `Untouched for over ${s.weights.staleDays} days.` },
   "NO-DATE-OLD": { what: "Old, no date", why: (s) => `Open over ${s.weights.noDateOldDays} days with no due date, so nothing can measure it.` },
 };
 
-/**
- * Everything a sweep should raise on one ticket.
- *
- * Two families. GAPS are data missing where its absence has a consequence — the
- * optional tier means these are never REQUIRED to save, but that is not the same
- * as being fine to leave out. RISKS are work going wrong quietly: past its date,
- * left behind in a shipped release, too large to finish in time, or carrying one
- * of the contradiction flags.
- */
-export function auditTicket(t: Ticket, s: Settings, now = new Date()): Alert[] {
-  const out: Alert[] = [];
-  // Closed work cannot slip and does not need classifying, so the sweep stops
-  // here. Raising gaps on finished tickets is noise, and the audit exists to
-  // point at work that still needs something.
-  if (!isOpen(t)) return out;
+/** The fields that hold a ticket in Fill out until they are answered. */
+export const REQUIRED_FIELDS = ["priority", "type", "estimate", "dueDate"] as const;
+export type RequiredField = (typeof REQUIRED_FIELDS)[number];
 
+/** Why each required field matters: shown on the Fill out card. */
+export const REQUIRED_WHY: Record<RequiredField, { what: string; why: string }> = {
+  priority: { what: "Priority", why: "Nothing to rank it by, so auto-optimize cannot order it." },
+  type: { what: "Type", why: "Not marked Front-end / Back-end / Driver / Server, so per-team capacity cannot count it." },
+  estimate: { what: "Estimate", why: "No length in sprints, so it cannot be given a span or checked against capacity." },
+  dueDate: { what: "Due date", why: "No date and no explicit \"no hard date\", so no release can be judged as in time." },
+};
+
+/** Required fields this ticket has not answered. */
+export function missingRequired(t: Ticket): RequiredField[] {
+  const out: RequiredField[] = [];
+  if (t.priority === null) out.push("priority");
+  if (t.type === null) out.push("type");
+  if (!isEstimate(t.estimate)) out.push("estimate");
+  if (!t.dueDate && !t.noHardDate) out.push("dueDate");
+  return out;
+}
+
+/** Ready to schedule: auto-optimize has everything it needs to place it. */
+export const isReady = (t: Ticket): boolean => missingRequired(t).length === 0;
+
+/** Details that would still help but never hold a ticket back. */
+export function nudges(t: Ticket): Alert[] {
+  const out: Alert[] = [];
+  if (!isOpen(t)) return out;
   if (!t.summary.trim()) {
     out.push({ kind: "NO-SUMMARY", severity: "gap", what: "No summary",
       why: "Nothing records what this is or why it exists." });
@@ -410,90 +485,57 @@ export function auditTicket(t: Ticket, s: Settings, now = new Date()): Alert[] {
     out.push({ kind: "NO-PROJECTS", severity: "gap", what: "No project",
       why: "It appears in no project update, so nobody but you will ever see it." });
   }
-  if (t.priority === DEFAULT_PRIORITY) {
-    out.push({ kind: "NO-PRIORITY", severity: "gap", what: "Unclassified",
-      why: "No priority, so the board has nothing to sort it by and it stays in the backlog." });
-  }
-  if (t.type === null) {
-    out.push({ kind: "NO-CATEGORY", severity: "gap", what: "No category",
-      why: "Not marked Front-end / Back-end / Driver / Server, so it falls out of those filters." });
-  }
-  if (!t.dueDate) {
-    out.push({ kind: "NO-DUE", severity: "gap", what: "No date",
-      why: "Nothing to time it against, so no release can be judged as fitting — and committed work cannot be late." });
-  }
   if (t.stakeholders.length === 0) {
     out.push({ kind: "NO-STAKEHOLDERS", severity: "gap", what: "Nobody waiting",
       why: "No stakeholder attached — worth checking this is still a real ask." });
   }
+  return out;
+}
+
+/**
+ * What is going wrong with one ticket: Check's per-ticket items.
+ *
+ * Closed work cannot slip, so it raises nothing. Release-level problems (over
+ * capacity, scope after freeze) need the whole register and are added in the store.
+ */
+export function riskAlerts(t: Ticket, s: Settings, now = new Date()): Alert[] {
+  const out: Alert[] = [];
+  if (!isOpen(t)) return out;
 
   const toDue = daysUntil(t.dueDate, now);
   if (toDue !== null && toDue < 0) {
     out.push({ kind: "PAST-DUE", severity: "risk", what: "Past due",
       why: `Its due date passed ${-toDue} day${-toDue === 1 ? "" : "s"} ago and it is still open.` });
   }
-
-  const sp = findSprint(s, t.sprint);
-  if (sp && hasShipped(sp, now)) {
-    out.push({ kind: "SHIPPED-RELEASE", severity: "risk", what: "Left behind",
-      why: `${sp.name} shipped ${daysSince(sp.release, now)} days ago and this is still open.` });
+  if (shipsLate(t, s)) {
+    const sp = findSprint(s, t.sprint)!;
+    out.push({ kind: "WONT-FIT", severity: "risk", what: "Ships late",
+      why: `${sp.name} ships ${sp.release}, after its due date of ${t.dueDate}.` });
   }
-
-  if (derive(t, s, now).overEstimate) {
-    out.push({ kind: "WONT-FIT", severity: "risk", what: "Will not fit",
-      why: `${estimateLabel(t.estimate)} of work cannot finish before its due date.` });
+  if (startsTooLate(t, s)) {
+    const span = spanOf(t, s);
+    out.push({ kind: "STARTS-LATE", severity: "risk", what: "Starts too late",
+      why: span.short > 0
+        ? `${estimateLabel(t.estimate)} of work needs ${span.short} more release${span.short === 1 ? "" : "s"} before ${t.sprint} than there are.`
+        : `${estimateLabel(t.estimate)} of work would have had to start in ${span.releases[0]}, which had already shipped.` });
   }
-
   for (const f of computeFlags(t, s, now)) {
     out.push({ kind: f, severity: "risk", what: FLAG_WHY[f].what, why: FLAG_WHY[f].why(s) });
   }
   return out;
 }
 
-export interface AuditRow { ticket: Ticket; alerts: Alert[]; }
-
-export interface AuditResult {
-  /** Every ticket in scope, worst first. */
-  rows: AuditRow[];
-  tickets: number;
-  withAlerts: number;
-  alerts: number;
-  gaps: number;
-  risks: number;
-}
-
-/** Sweep the register. Worst first, so fixing from the top shrinks the list. */
-export function audit(
-  tickets: Ticket[], s: Settings, opts: { includeClosed?: boolean } = {}, now = new Date(),
-): AuditResult {
-  const rows: AuditRow[] = tickets
-    .filter((t) => opts.includeClosed || isOpen(t))
-    .map((t) => ({ ticket: t, alerts: auditTicket(t, s, now) }))
-    .sort((a, b) =>
-      b.alerts.length - a.alerts.length
-      || scoreTicket(b.ticket, s, now) - scoreTicket(a.ticket, s, now));
-
-  const all = rows.flatMap((r) => r.alerts);
-  return {
-    rows,
-    tickets: rows.length,
-    withAlerts: rows.filter((r) => r.alerts.length > 0).length,
-    alerts: all.length,
-    gaps: all.filter((a) => a.severity === "gap").length,
-    risks: all.filter((a) => a.severity === "risk").length,
-  };
-}
-
 /** Draft priority score. A proposal the human overrides, never the verdict. */
 export function scoreTicket(t: Ticket, s: Settings, now = new Date()): number {
   const w = s.weights;
   let n = t.priority === "Critical" ? w.critical : t.priority === "Should" ? w.should : 0;
+  const est = t.estimate ?? 0;
   const toDue = daysUntil(t.dueDate, now);
   if (toDue !== null) n += Math.max(0, w.urgencyHorizonDays - toDue) * w.urgencyPerDay;
   const age = daysSince(t.opened, now);
   if (age !== null) n += (Math.min(age, 365) / 30) * w.agePer30Days;
   n += t.carryovers * w.perCarryover;
-  n += t.estimate <= 1 ? w.smallBonus : t.estimate === 2 ? w.smallBonus * 0.5 : 0;
+  n += est === 1 ? w.smallBonus : est === 2 ? w.smallBonus * 0.5 : 0;
   return Math.round(n);
 }
 
@@ -512,9 +554,7 @@ export function derive(t: Ticket, s: Settings, now = new Date()): DerivedTicket 
     ageDays: daysSince(t.opened, now),
     daysToDue: toDue,
     waitedLabel: waitedLabel(t, now),
-    // a release cadence of sprintLengthDays is the only way to turn an estimate
-    // in sprints into days, so keep the comparison in days
-    overEstimate: toDue !== null && toDue < t.estimate * s.sprintLengthDays,
+    shipsLate: shipsLate(t, s),
   };
 }
 

@@ -1,4 +1,5 @@
 import {
+  type Alert,
   type DecisionAction,
   type ProjectId,
   type Settings,
@@ -7,23 +8,27 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_PROJECTS,
   addDays,
-  DEFAULT_PRIORITY,
-  CATEGORIES,
-  PRIORITIES,
+  compareSprints,
   defaultSprints,
   derive,
   DEFAULT_REVISIT_WEEKS,
   estimateLabel,
+  fillState,
   findSprint,
-  loadUnits,
+  isReady,
+  missingRequired,
+  nudges,
+  priorityRank,
+  releaseOrder,
   revisitInWeeks,
   revisitIsDue,
+  riskAlerts,
   hasShipped,
   iso,
   isFrozen,
   isOpen,
   label,
-  queueHealth,
+  spanOf,
 } from "./schema";
 import { seedTickets } from "./seed";
 
@@ -41,8 +46,8 @@ export interface Decision {
   action: DecisionAction;
   reason: string;
   revisit: string | null;
-  sprint: string;
-  prev: Ticket;               // snapshot for undo
+  /** The release the ticket ships in after the decision, if any. */
+  sprint: string | null;
 }
 
 /**
@@ -72,8 +77,9 @@ export interface Snapshot {
   op?: { kind: "move"; ticketId: number; sprint: string | null };
 }
 
-/** The stored format. 4: history entries record changes, not full states. */
-export const STORE_VERSION = 4;
+/** The stored format. 4: history entries record changes, not full states.
+ *  5: the plan workflow — nullable estimate and priority, noHardDate, planned. */
+export const STORE_VERSION = 5;
 
 export interface Store {
   version: typeof STORE_VERSION;
@@ -146,19 +152,13 @@ function looksValid(s: unknown): s is Store {
         typeof t.name === "string" &&
         Array.isArray(t.projects) &&
         typeof t.carryovers === "number" &&
-        "sprint" in t,
+        typeof t.noHardDate === "boolean" &&
+        "sprint" in t &&
+        "planned" in t,
     ) &&
     Array.isArray(v.decisions) &&
     !!v.settings &&
     Array.isArray(v.settings.sprints)
-  );
-}
-
-/** Releases were names before they had dates; upgrade in place. */
-function migrateSprints(sprints: unknown): Sprint[] {
-  if (!Array.isArray(sprints)) return defaultSprints();
-  return sprints.map((sp) =>
-    typeof sp === "string" ? { name: sp, freeze: null, release: null } : (sp as Sprint),
   );
 }
 
@@ -183,63 +183,20 @@ function migrateProjects(settingsProjects: unknown, tickets: Ticket[]): string[]
 }
 
 /**
- * Tickets predate the tier split. Drop what the model no longer carries and
- * default what is new, rather than reseeding and losing the history.
- * `size` (S/M/L) becomes an estimate in sprints; owner, owner-type and
- * next-action are gone.
- */
-function migrateTicket(raw: unknown): Ticket {
-  const t = { ...(raw as Record<string, unknown>) };
-  delete t.ownerType;
-  delete t.owner;
-  delete t.size;
-  delete t.nextAction;
-  if (typeof t.estimate !== "number") t.estimate = 2;
-  if (typeof t.notes !== "string") t.notes = "";
-
-  // `type` used to hold the priority and now holds the category. Move the old
-  // value across and leave the category unset: relabelling old data as a
-  // category would invent a judgement nobody made, and the audit will ask for it.
-  const old = t.type;
-  const oldIsPriority = typeof old === "string" && (PRIORITIES as readonly string[]).includes(old);
-  const oldIsCategory = typeof old === "string" && (CATEGORIES as readonly string[]).includes(old);
-  const hasNewPriority = typeof t.priority === "string"
-    && (PRIORITIES as readonly string[]).includes(t.priority as string);
-
-  if (oldIsPriority && (!hasNewPriority || t.priority === DEFAULT_PRIORITY)) {
-    // The old single axis: `type` held the priority. A priority that is only the
-    // default does not outrank real information. The category stays unset —
-    // inventing one would be a judgement nobody made, and the audit will ask.
-    t.priority = old;
-    t.type = null;
-  } else if (hasNewPriority) {
-    t.type = oldIsCategory ? old : null;
-  } else {
-    t.priority = DEFAULT_PRIORITY;
-    t.type = null;
-  }
-  if (!Array.isArray(t.stakeholders)) t.stakeholders = [];
-  return t as unknown as Ticket;
-}
-
-/**
- * Bring any older save up to the current shape. Used by EVERY load path —
- * localStorage, the file endpoint, and a file the user picks. Skipping it on one
- * path means an old-shaped register arrives badly typed, which is how a rename
- * turns into undefined priorities and a board with nothing in it.
+ * Repair what a valid save can still get wrong. Used by EVERY load path —
+ * localStorage, the file endpoint, and a file the user picks.
+ *
+ * Older formats are not converted: the stored version is checked first, and a
+ * save from an earlier one is refused whole (the server keeps the old file when a
+ * save in the new format replaces it). What is left is integrity: a missing
+ * history, and project names the tickets carry but the list has lost.
  */
 export function migrateStore(parsed: unknown): Store {
   const s = parsed as Store;
-  const tickets = (s.tickets as unknown[]).map(migrateTicket);
   return {
     ...s,
     history: Array.isArray(s.history) ? s.history : [],
-    tickets,
-    settings: {
-      ...s.settings,
-      sprints: migrateSprints(s.settings.sprints),
-      projects: migrateProjects(s.settings.projects, tickets),
-    },
+    settings: { ...s.settings, projects: migrateProjects(s.settings.projects, s.tickets) },
   };
 }
 
@@ -295,23 +252,25 @@ export function serialize(s: Store): string {
   return `${JSON.stringify(s, null, 2)}\n`;
 }
 
-/** Only the fields a person decides. Nothing else is asked for. */
-export const blankTicket = (): Omit<Ticket, "id"> => ({
+/** Only the fields a person decides, all unset: a default never stands in for a decision. */
+export const blankTicket = (now = new Date()): Omit<Ticket, "id"> => ({
   name: "",
   summary: "",
   projects: [],
   externalUrl: null,
   dueDate: null,
-  estimate: 2,
-  priority: DEFAULT_PRIORITY,     // a new ask is unclassified until someone says otherwise
-  type: null,                     // and its category is usually not known yet
+  noHardDate: false,
+  estimate: null,
+  priority: null,
+  type: null,
   stakeholders: [],
   notes: "",
   state: "New",
-  opened: iso(new Date()),
+  opened: iso(now),
   sprint: null,
+  planned: null,
   carryovers: 0,
-  lastTouched: iso(new Date()),
+  lastTouched: iso(now),
   closed: null,
 });
 
@@ -327,23 +286,37 @@ export function createTicket(s: Store, draft: Omit<Ticket, "id">): Store {
   return { ...s, tickets: [...s.tickets, t], nextTicketId: s.nextTicketId + 1 };
 }
 
+/**
+ * Apply a patch to one ticket and keep its invariants:
+ *
+ * - a due date and "no hard date" never both hold — the newer answer wins;
+ * - an open ticket with a ship release is Committed, without one it is New;
+ * - `planned` is stamped when a person sets the ship release or changes the
+ *   estimate of scheduled work, and cleared when it is unscheduled.
+ */
+export function patchTicket(t: Ticket, patch: Partial<Ticket>, now = new Date()): Ticket {
+  const next: Ticket = {
+    ...t,
+    ...patch,
+    projects: patch.projects ? [...patch.projects] : t.projects,
+    stakeholders: patch.stakeholders ? [...patch.stakeholders] : t.stakeholders,
+    lastTouched: patch.lastTouched ?? iso(now),
+  };
+  if (patch.dueDate && patch.dueDate !== t.dueDate) next.noHardDate = false;
+  else if (patch.noHardDate && !t.noHardDate) next.dueDate = null;
+
+  if (next.state === "New" || next.state === "Committed") next.state = next.sprint ? "Committed" : "New";
+  if (!next.sprint) next.planned = null;
+  else if (next.sprint !== t.sprint || (next.estimate !== t.estimate && t.sprint)) {
+    next.planned = patch.planned !== undefined ? patch.planned : iso(now);
+  }
+  return next;
+}
+
 /** Patch a ticket — this is "edit in the browser". Any edit re-stamps
  *  lastTouched unless the caller set it explicitly. */
 export function updateTicket(s: Store, id: number, patch: Partial<Ticket>, now = new Date()): Store {
-  return {
-    ...s,
-    tickets: s.tickets.map((t) =>
-      t.id === id
-        ? {
-            ...t,
-            ...patch,
-            projects: patch.projects ? [...patch.projects] : t.projects,
-            stakeholders: patch.stakeholders ? [...patch.stakeholders] : t.stakeholders,
-            lastTouched: patch.lastTouched ?? iso(now),
-          }
-        : t,
-    ),
-  };
+  return { ...s, tickets: s.tickets.map((t) => (t.id === id ? patchTicket(t, patch, now) : t)) };
 }
 
 /**
@@ -358,9 +331,7 @@ export function deleteTicket(s: Store, id: number): Store {
 
 // ---------------------------------------------------------------- sprints
 
-export function compareSprints(a: string, b: string): number {
-  return a.localeCompare(b, undefined, { numeric: true });
-}
+export { compareSprints };
 
 /** Add a release column, slotted in by version. Dates start empty. */
 export function addSprint(s: Store, name: string): Store {
@@ -586,43 +557,36 @@ export interface OptimizeResult {
 }
 
 /**
- * Propose release assignments for tickets that have none.
+ * Propose ship releases for ready tickets that have none.
  *
- * Conservative by design: it never moves work that is already scheduled and
- * never unschedules anything, so a manual arrangement survives. It skips frozen
- * and shipped releases, because adding scope to those is a human decision.
+ * Conservative by design: it never moves work that is already scheduled, never
+ * unschedules anything, and never places a ticket that is not ready, so a manual
+ * arrangement survives. A ticket estimated at N sprints spans N releases ending
+ * where it ships; every one of them must be unshipped and have a unit free, and
+ * the ship release must not be frozen, because a freeze is about what ships.
  *
  * A release with no date is still usable — it just cannot be checked against a
- * due date, so it sorts last and any dated ticket landing there is flagged.
+ * due date, so it sorts last and any dated ticket shipping there is flagged.
  * Returning an empty proposal always comes with a reason, since a button that
  * does nothing must say why.
  */
 export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
   const target = s.settings.commitTargetPerSprint;
+  const order = releaseOrder(s.settings.sprints);
 
   const skipped: OptimizeResult["skipped"] = [];
-  const usable: Sprint[] = [];
-  for (const sp of s.settings.sprints) {
+  for (const sp of order) {
     if (hasShipped(sp, now)) skipped.push({ name: sp.name, reason: "shipped" });
     else if (isFrozen(sp, now)) skipped.push({ name: sp.name, reason: "frozen" });
-    else usable.push(sp);
   }
+  const unshipped = order.filter((sp) => !hasShipped(sp, now));
+  const eligible = unshipped.filter((sp) => !isFrozen(sp, now));
 
-  const eligible = [...usable].sort((a, b) => {
-    if (a.release && b.release) return a.release.localeCompare(b.release);
-    if (a.release) return -1;
-    if (b.release) return 1;
-    // Neither has a date: fall back to version order, oldest first — the same
-    // direction the date-repair offer uses, so the two agree about what is next.
-    return compareSprints(a.name, b.name);
-  });
-
-  // Load in WORK UNITS, not head count. A four-sprint ticket is four units of
-  // the team's capacity, so it cannot be counted the same as a one-sprint one.
-  const load = new Map(eligible.map((sp) => [sp.name, loadUnits(s.tickets, sp.name)]));
+  // Load in span units: one per open ticket in each release it spans.
+  const load = new Map(order.map((sp) => [sp.name, fillState(s.tickets, sp.name, s.settings).load]));
 
   const candidates = s.tickets
-    .filter((t) => isOpen(t) && !t.sprint)
+    .filter((t) => isOpen(t) && !t.sprint && (t.state === "New") && isReady(t))
     .map((t) => derive(t, s.settings, now))
     .sort((a, b) => {
       const dated = (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1);
@@ -631,28 +595,26 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
       return b.score - a.score;                             // then by draft score
     });
 
+  /** The span a ticket of length n would have shipping in `ship`, if it fits. */
+  const spanAt = (ship: Sprint, n: number): Sprint[] | null => {
+    const at = unshipped.findIndex((x) => x.name === ship.name);
+    if (at - n + 1 < 0) return null;                        // would start in a shipped release
+    const span = unshipped.slice(at - n + 1, at + 1);
+    return span.every((x) => load.get(x.name)! + 1 <= target) ? span : null;
+  };
+
   const moves: Move[] = [];
   let tooBig = 0;
   for (const t of candidates) {
-    // The WHOLE estimate has to fit. Capacity is work, so room that is already
-    // committed elsewhere cannot absorb this ticket — which is what stops the
-    // proposal from shoving everything into the earliest releases.
-    const room = eligible.filter((sp) => load.get(sp.name)! + t.estimate <= target);
-    if (room.length === 0) {
-      // Nothing takes this one. If not even a one-unit ticket would fit, nothing
-      // later will either; otherwise it is just too large for the room left, and
-      // a smaller ticket may still fit.
-      if (!eligible.some((sp) => load.get(sp.name)! + 1 <= target)) break;
-      if (t.estimate > target) tooBig += 1;
-      continue;
-    }
+    const n = t.estimate!;
+    if (n > unshipped.length) { tooBig += 1; continue; }
+    const fits = eligible.filter((sp) => spanAt(sp, n) !== null);
+    if (fits.length === 0) continue;
     // The release has to ship on or before the due date to be any use.
-    const inTime = t.dueDate
-      ? room.find((sp) => sp.release !== null && sp.release <= t.dueDate!)
-      : room[0];
-    const sprint = inTime ?? room[0];
-    const next = load.get(sprint.name)! + t.estimate;
-    load.set(sprint.name, next);
+    const inTime = t.dueDate ? fits.find((sp) => sp.release !== null && sp.release <= t.dueDate!) : fits[0];
+    const ship = inTime ?? fits[0];
+    const span = spanAt(ship, n)!;
+    for (const x of span) load.set(x.name, load.get(x.name)! + 1);
 
     const bits: string[] = [];
     if (t.priority === "Critical") bits.push("critical");
@@ -661,19 +623,20 @@ export function optimizePlan(s: Store, now = new Date()): OptimizeResult {
 
     const warning = !t.dueDate
       ? undefined
-      : sprint.release === null
+      : ship.release === null
         ? "this release has no date"
         : inTime
           ? undefined
           : "no release ships before its due date";
 
+    const spanText = span.length > 1 ? `${span[0].name}–${ship.name}` : ship.name;
     moves.push({
       id: t.id,
       label: label(t.id),
       name: t.name,
       from: null,
-      to: sprint.name,
-      reason: `${bits.join(", ")} → ${sprint.release ? `ships ${sprint.release}` : "no release date"} (${next}/${target} units)`,
+      to: ship.name,
+      reason: `${bits.join(", ")} → ${spanText}, ${ship.release ? `ships ${ship.release}` : "no release date"}`,
       warning,
     });
   }
@@ -701,8 +664,8 @@ export function explainPlan(r: OptimizeResult): string {
   if (r.undated.length) constraints.push(`${r.undated.join(", ")} have no release date`);
   if (r.full.length) constraints.push(`${r.full.join(", ")} at capacity`);
   if (r.over.length) constraints.push(`${r.over.join(", ")} already over capacity`);
-  if (r.tooBig > 0) constraints.push(`${r.tooBig} too large for any release`);
-  if (r.candidates === 0) constraints.push("no open ticket is unscheduled");
+  if (r.tooBig > 0) constraints.push(`${r.tooBig} longer than the releases left`);
+  if (r.candidates === 0) constraints.push("no ready ticket is unscheduled");
   else if (r.unplaced > 0) constraints.push(`${r.unplaced} left unplaced`);
 
   if (r.moves.length === 0) {
@@ -743,39 +706,60 @@ export function fillReleaseDates(s: Store, now = new Date()): Store {
 
 /** Apply a proposal. */
 export function applyPlan(s: Store, moves: Move[], now = new Date()): Store {
-  return moves.reduce(
-    (acc, m) => updateTicket(acc, m.id, { sprint: m.to, state: "Committed" }, now),
-    s,
-  );
+  return moves.reduce((acc, m) => moveTicketToSprint(acc, m.id, m.to, now), s);
 }
 
 /** Remove a release column; tickets in it become unscheduled, not deleted. */
-export function removeSprint(s: Store, name: string): Store {
+export function removeSprint(s: Store, name: string, now = new Date()): Store {
+  const kept = { ...s, settings: { ...s.settings, sprints: s.settings.sprints.filter((x) => x.name !== name) } };
   return {
-    ...s,
-    settings: { ...s.settings, sprints: s.settings.sprints.filter((x) => x.name !== name) },
-    tickets: s.tickets.map((t) => (t.sprint === name ? { ...t, sprint: null } : t)),
+    ...kept,
+    tickets: kept.tickets.map((t) => (t.sprint === name ? patchTicket(t, { sprint: null }, now) : t)),
   };
 }
 
-/** Move a ticket between sprint columns (or back to the backlog). */
+/**
+ * Set the release a ticket ships in (or none). Placing work by hand is allowed for
+ * any open ticket, ready or not; placing it takes it on, so a blocked or deferred
+ * ticket becomes committed work again.
+ */
 export function moveTicketToSprint(s: Store, id: number, sprint: string | null, now = new Date()): Store {
-  return updateTicket(s, id, { sprint, state: sprint ? "Committed" : "Accepted-Backlog" }, now);
+  const t = s.tickets.find((x) => x.id === id);
+  if (!t || !isOpen(t)) return s;
+  return updateTicket(s, id, { sprint, state: sprint ? "Committed" : "New" }, now);
 }
 
 // ---------------------------------------------------------------- decisions
 
-export function applyToTicket(t: Ticket, action: DecisionAction, sprint: string, now: Date): Ticket {
+/** The release after `name` in ship order that has not shipped: where carried-over work goes. */
+export function nextRelease(settings: Settings, name: string, now = new Date()): string | null {
+  const order = releaseOrder(settings.sprints);
+  const at = order.findIndex((x) => x.name === name);
+  if (at < 0) return null;
+  return order.slice(at + 1).find((x) => !hasShipped(x, now))?.name ?? null;
+}
+
+export function applyToTicket(t: Ticket, action: DecisionAction, settings: Settings, now: Date): Ticket {
   const today = iso(now);
   switch (action) {
     case "Accept":
-      return { ...t, state: "Committed", sprint, lastTouched: today };
+      return patchTicket(t, { state: t.sprint ? "Committed" : "New" }, now);
     case "Defer":
-      return { ...t, state: "Deferred", lastTouched: today };
-    case "Decline":
-      return { ...t, state: "Won't Do", closed: today, lastTouched: today };
+      return patchTicket(t, { state: "Deferred", sprint: null }, now);
     case "Block":
-      return { ...t, state: "Blocked", lastTouched: today };
+      return patchTicket(t, { state: "Blocked", sprint: null }, now);
+    case "Decline":
+      return patchTicket(t, { state: "Won't Do", closed: today }, now);
+    case "Done":
+      return patchTicket(t, { state: "Done", closed: today }, now);
+    case "Carry over": {
+      const next = t.sprint ? nextRelease(settings, t.sprint, now) : null;
+      if (!next) return t;
+      // `planned` is left alone: carrying over is progress, not a new plan.
+      return patchTicket(t, { sprint: next, carryovers: t.carryovers + 1, planned: t.planned }, now);
+    }
+    case "Unschedule":
+      return patchTicket(t, { state: "New", sprint: null }, now);
   }
 }
 
@@ -790,7 +774,8 @@ export function recordDecision(
   const idx = s.tickets.findIndex((t) => t.id === ticketId);
   if (idx < 0) return s;
   const prev = s.tickets[idx];
-  const next = applyToTicket(prev, action, s.settings.currentSprint, now);
+  const next = applyToTicket(prev, action, s.settings, now);
+  if (next === prev) return s;
   const decision: Decision = {
     id: s.nextDecisionId,
     at: now.toISOString(),
@@ -800,12 +785,24 @@ export function recordDecision(
     action,
     reason,
     revisit,
-    sprint: s.settings.currentSprint,
-    prev: clone(prev),
+    sprint: next.sprint ?? (action === "Done" ? prev.sprint : null),
   };
   const tickets = s.tickets.slice();
   tickets[idx] = next;
   return { ...s, tickets, decisions: [...s.decisions, decision], nextDecisionId: s.nextDecisionId + 1 };
+}
+
+/**
+ * Edit a ticket from its Fill out card. If the edit answers the last required
+ * field, the ticket is accepted: it moves to Schedule, and the decision log says so.
+ */
+export function fillOut(s: Store, id: number, patch: Partial<Ticket>, now = new Date()): Store {
+  const before = s.tickets.find((t) => t.id === id);
+  if (!before) return s;
+  const edited = updateTicket(s, id, patch, now);
+  const after = edited.tickets.find((t) => t.id === id)!;
+  const accepted = !isReady(before) && isReady(after) && (after.state === "New" || after.state === "Committed");
+  return accepted ? recordDecision(edited, id, "Accept", "filled out", null, now) : edited;
 }
 
 /** Add a project to the controlled list. Blank names and duplicates are refused. */
@@ -836,71 +833,177 @@ export function removeProject(s: Store, name: string): Store {
   };
 }
 
-export function undoLast(s: Store): Store {
-  if (s.decisions.length === 0) return s;
-  const last = s.decisions[s.decisions.length - 1];
-  return {
-    ...s,
-    tickets: s.tickets.map((t) => (t.id === last.ticketId ? clone(last.prev) : t)),
-    decisions: s.decisions.slice(0, -1),
-  };
-}
+// ---------------------------------------------------------------- the plan pipeline
 
-// ---------------------------------------------------------------- selectors
-
-/** Still needing a triage decision. */
-export function undecided(s: Store): Ticket[] {
-  return s.tickets
-    .filter((t) => t.state === "New" || t.state === "Accepted-Backlog")
-    .sort((a, b) => derive(b, s.settings).score - derive(a, s.settings).score);
-}
-
-/** The revisit date on the most recent defer of a ticket, if it has one. */
-export function revisitFor(s: Store, ticketId: number): string | null {
+/** The most recent defer or block of a ticket: its revisit day and the reason given. */
+export function lastSetAside(s: Store, ticketId: number): Decision | null {
   for (let i = s.decisions.length - 1; i >= 0; i--) {
     const d = s.decisions[i];
-    if (d.ticketId === ticketId && d.action === "Defer") return d.revisit;
+    if (d.ticketId === ticketId && (d.action === "Defer" || d.action === "Block")) return d;
   }
   return null;
 }
 
+export interface Returned {
+  ticket: Ticket;
+  revisit: string;
+  /** Why it was set aside: the block reason, or the deferral's. */
+  reason: string;
+}
+
 /**
- * Deferred tickets whose revisit day has arrived, longest-waiting first.
+ * Deferred and blocked tickets whose revisit day has arrived, longest-waiting first.
  *
  * This is what makes a revisit date mean anything. Without it the date is
- * written into the decision log and never read again — a field that does
- * nothing, which is the failure this register exists to avoid.
+ * written into the decision log and never read again.
  */
-export function revisitDue(s: Store, now = new Date()): { ticket: Ticket; revisit: string }[] {
+export function revisitDue(s: Store, now = new Date()): Returned[] {
   return s.tickets
-    .filter((t) => t.state === "Deferred")
-    .map((t) => ({ ticket: t, revisit: revisitFor(s, t.id) }))
-    .filter((x): x is { ticket: Ticket; revisit: string } => revisitIsDue(x.revisit, now))
+    .filter((t) => t.state === "Deferred" || t.state === "Blocked")
+    .map((t) => ({ t, d: lastSetAside(s, t.id) }))
+    .filter((x) => revisitIsDue(x.d?.revisit, now))
+    .map((x) => ({ ticket: x.t, revisit: x.d!.revisit!, reason: x.d!.reason }))
     .sort((a, b) => a.revisit.localeCompare(b.revisit));
 }
 
+export interface FillOutItem {
+  ticket: Ticket;
+  /** Set when it came back on its revisit day. */
+  returned: Returned | null;
+}
+
 /**
- * The triage queue: work that has come back for revisiting leads, then the
- * undecided few. Revisits go first because they have waited longest.
+ * Fill out: returned work first, since it has waited longest; then every open
+ * ticket missing a required field, highest draft score first.
  */
-export function triageQueue(s: Store, skipped: number[] = [], now = new Date()): Ticket[] {
-  const back = revisitDue(s, now).map((x) => x.ticket);
-  return [...back, ...undecided(s)].filter((t) => !skipped.includes(t.id));
+export function fillOutQueue(s: Store, now = new Date()): FillOutItem[] {
+  const back = revisitDue(s, now).map((r) => ({ ticket: r.ticket, returned: r }));
+  const incomplete = s.tickets
+    .filter((t) => (t.state === "New" || t.state === "Committed") && !isReady(t))
+    .sort((a, b) => derive(b, s.settings, now).score - derive(a, s.settings, now).score)
+    .map((t) => ({ ticket: t, returned: null }));
+  return [...back, ...incomplete];
 }
 
-export function acceptedThisSprint(s: Store): number {
-  return s.decisions.filter((d) => d.action === "Accept").length;
+/** Schedule: ready, open, unscheduled — by priority, then draft score. */
+export function scheduleQueue(s: Store, now = new Date()): Ticket[] {
+  return s.tickets
+    .filter((t) => t.state === "New" && !t.sprint && isReady(t))
+    .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority)
+      || derive(b, s.settings, now).score - derive(a, s.settings, now).score);
 }
 
-export function stats(s: Store) {
+export interface CloseOut {
+  release: string;
+  shipped: string | null;
+  tickets: Ticket[];
+  /** Where carried-over work would go; null when there is no later release. */
+  next: string | null;
+}
+
+/** Shipped releases that still have open work shipping in them, in ship order. */
+export function closeOutQueue(s: Store, now = new Date()): CloseOut[] {
+  return releaseOrder(s.settings.sprints)
+    .filter((sp) => hasShipped(sp, now))
+    .map((sp) => ({
+      release: sp.name,
+      shipped: sp.release,
+      tickets: s.tickets.filter((t) => t.state === "Committed" && t.sprint === sp.name),
+      next: nextRelease(s.settings, sp.name, now),
+    }))
+    .filter((c) => c.tickets.length > 0);
+}
+
+export type CloseOutChoice = "Done" | "Carry over" | "Unschedule";
+
+/** Apply the close-out choices that were made. Undecided tickets are simply absent. */
+export function applyCloseOut(
+  s: Store, choices: { id: number; choice: CloseOutChoice }[], now = new Date(),
+): Store {
+  return choices.reduce((acc, c) => {
+    const reason = c.choice === "Done" ? "shipped" : c.choice === "Carry over" ? "did not ship" : "back to backlog";
+    return recordDecision(acc, c.id, c.choice, reason, null, now);
+  }, s);
+}
+
+export interface CheckRow {
+  ticket: Ticket;
+  alerts: Alert[];
+}
+
+export interface CheckRelease {
+  /** null for open work that is not scheduled. */
+  release: string | null;
+  load: number;
+  capacity: number;
+  /** Release-level problems: over capacity, scope after freeze. */
+  alerts: Alert[];
+  rows: CheckRow[];
+}
+
+/**
+ * Check: what is going wrong, release by release in ship order, then ready work
+ * that is not scheduled yet. Only rows and releases with something to say are kept.
+ */
+export function checkReport(s: Store, now = new Date()): CheckRelease[] {
+  const capacity = s.settings.commitTargetPerSprint;
+  const rowsFor = (pred: (t: Ticket) => boolean): CheckRow[] =>
+    s.tickets
+      .filter((t) => isOpen(t) && pred(t))
+      .map((t) => ({ ticket: t, alerts: riskAlerts(t, s.settings, now) }))
+      .filter((r) => r.alerts.length > 0)
+      .sort((a, b) => b.alerts.length - a.alerts.length);
+
+  const out: CheckRelease[] = releaseOrder(s.settings.sprints).map((sp) => {
+    const { load, room } = fillState(s.tickets, sp.name, s.settings);
+    const alerts: Alert[] = [];
+    if (room < 0 && !hasShipped(sp, now)) {
+      alerts.push({ kind: "OVER-CAPACITY", severity: "risk", what: "Over capacity",
+        why: `${load} units of work against a capacity of ${capacity}: ${-room} more than the team can take.` });
+    }
+    const late = slippedIn(s, sp.name, now);
+    if (late.length > 0) {
+      alerts.push({ kind: "AFTER-FREEZE", severity: "risk", what: "Scope after freeze",
+        why: `${late.length} placement${late.length === 1 ? "" : "s"} arrived after ${sp.name} froze on ${sp.freeze}.` });
+    }
+    return { release: sp.name, load, capacity, alerts, rows: rowsFor((t) => t.sprint === sp.name) };
+  });
+  // Unscheduled work is checked only once it is ready: until then it is in Fill out,
+  // whose card already shows its risks, and counting it twice inflates the header.
+  out.push({ release: null, load: 0, capacity, alerts: [], rows: rowsFor((t) => !t.sprint && isReady(t)) });
+  return out.filter((r) => r.alerts.length > 0 || r.rows.length > 0);
+}
+
+export interface Pipeline {
+  fillOut: number;
+  schedule: number;
+  check: number;
+  /** Open tickets with a detail that would still help. */
+  nudges: number;
+}
+
+/** What each step holds, for the header. */
+export function pipeline(s: Store, now = new Date()): Pipeline {
+  const check = new Set<string>();
+  for (const r of checkReport(s, now)) {
+    for (const a of r.alerts) check.add(`${r.release}:${a.kind}`);
+    for (const row of r.rows) check.add(`t${row.ticket.id}`);
+  }
+  for (const c of closeOutQueue(s, now)) for (const t of c.tickets) check.add(`t${t.id}`);
   return {
-    ...queueHealth(s.tickets, s.settings),
-    total: s.tickets.length,
-    open: s.tickets.filter(isOpen).length,
-    accepted: acceptedThisSprint(s),
-    decided: s.decisions.length,
-    deferred: s.tickets.filter((t) => t.state === "Deferred").length,
-    declined: s.tickets.filter((t) => t.state === "Won't Do").length,
-    target: s.settings.commitTargetPerSprint,
+    fillOut: fillOutQueue(s, now).length,
+    schedule: scheduleQueue(s, now).length,
+    check: check.size,
+    nudges: s.tickets.filter((t) => nudges(t).length > 0).length,
   };
 }
+
+/** Required fields still missing on this ticket, for display. */
+export { missingRequired };
+
+/** The span label for a scheduled ticket: "v0.23–v0.24", or its one release. */
+export function spanLabel(t: Ticket, settings: Settings): string {
+  const r = spanOf(t, settings).releases;
+  return r.length > 1 ? `${r[0]}–${r[r.length - 1]}` : (r[0] ?? "");
+}
+

@@ -1,36 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type DecisionAction, type Ticket } from "./schema";
+import { type DecisionAction, type Ticket, queueHealth } from "./schema";
 import {
-  type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
-  deleteTicket,
-  fillReleaseDates, load, moveTicketToSprint, readStore, recordDecision, removeProject,
-  removeSprint, resetToSeed,
-  planRevert, revertTo, save,
-  serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
+  type CloseOutChoice, type Move, type Snapshot, type Store, addProject, addSprint, applyCloseOut, applyPlan,
+  blankTicket, createTicket, deleteTicket, fillOut, fillReleaseDates, load, moveTicketToSprint, pipeline,
+  readStore, recordDecision, removeProject, removeSprint, resetToSeed, planRevert, revertTo, save,
+  serialize, shiftSprint, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
   currentEtag, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
 } from "./persist";
 import { download, stamp } from "./exporters";
-import Triage from "./Triage";
-import Sprints from "./Sprints";
+import Plan, { type Step } from "./Plan";
 import Projects from "./Projects";
 import Register from "./Register";
 import DecisionLog from "./Decisions";
 import History from "./History";
 import TicketForm from "./TicketForm";
 import SprintForm from "./SprintForm";
-import Review from "./Review";
 
 const TABS = [
-  ["triage", "Triage"], ["review", "Review"], ["sprints", "Sprints"], ["projects", "Projects"],
-  ["register", "Register"], ["decisions", "Decisions"], ["history", "History"],
+  ["plan", "Plan"], ["projects", "Projects"], ["register", "Register"], ["decisions", "Decisions"],
+  ["history", "History"],
 ] as const;
 type Tab = (typeof TABS)[number][0];
 
 export default function App() {
   const [store, setStore] = useState<Store>(() => load());
-  const [tab, setTab] = useState<Tab>("triage");
+  const [tab, setTab] = useState<Tab>("plan");
+  const [step, setStep] = useState<Step>("fill");
   const [editing, setEditing] = useState<{ ticket: Ticket } | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingSprint, setEditingSprint] = useState<string | null>(null);
@@ -57,7 +54,8 @@ export default function App() {
     setStore((cur) => withHistory(cur, label, mutate, new Date(), op));
 
   useEffect(() => { save(store); }, [store]);
-  const s = useMemo(() => stats(store), [store]);
+  const p = useMemo(() => pipeline(store), [store]);
+  const wait = useMemo(() => queueHealth(store.tickets, store.settings).avgWaitWeeks, [store]);
 
   /**
    * Write this tab's register to the file, one save at a time.
@@ -189,6 +187,14 @@ export default function App() {
   const decide = (ticketId: number, action: DecisionAction, reason: string, revisit: string | null) =>
     act(`${action.toLowerCase()} ${ticketId}`, (cur) => recordDecision(cur, ticketId, action, reason, revisit));
 
+  const closeOut = (choices: { id: number; choice: CloseOutChoice }[]) =>
+    act(`close out ${choices.length} ticket${choices.length === 1 ? "" : "s"}`, (cur) => applyCloseOut(cur, choices));
+
+  const move = (id: number, sp: string | null) =>
+    act(`move ${id} to ${sp ?? "unscheduled"}`, (cur) => moveTicketToSprint(cur, id, sp), {
+      kind: "move", ticketId: id, sprint: sp,
+    });
+
   const reset = () => {
     if (window.confirm(
       "Replace every ticket and release with the demo data? This is recorded, so it can be " +
@@ -218,8 +224,10 @@ export default function App() {
           ))}
         </nav>
         <div className="spacer" />
-        <div className="dim small">
-          {s.open} open · {s.total} tickets · queued {Math.round(s.avgWaitWeeks)}w · {s.accepted}/{s.target} this sprint
+        <div className="dim small pipeline" aria-label="Pipeline">
+          {p.fillOut} to fill out · {p.schedule} to schedule · {p.check} to check
+          {p.nudges > 0 && <> · {p.nudges} would still help</>}
+          {Number.isFinite(wait) && <> · queued {Math.round(wait)}w</>}
         </div>
         <button className="pick" onClick={() => setCreating(true)}>+ New ticket</button>
       </header>
@@ -237,16 +245,16 @@ export default function App() {
       )}
 
       <main>
-        {tab === "triage" && <Triage store={store} onDecide={decide} onUndo={() => act("undo decision", undoLast)} />}
-        {tab === "review" && <Review store={store} onEdit={(t) => setEditing({ ticket: t })} />}
-        {tab === "sprints" && (
-          <Sprints
+        {tab === "plan" && (
+          <Plan
             store={store}
+            step={step}
+            onStep={setStep}
             onEdit={(t) => setEditing({ ticket: t })}
-            onMove={(id, sp) =>
-              act(`move ${id} to ${sp ?? "backlog"}`, (cur) => moveTicketToSprint(cur, id, sp), {
-                kind: "move", ticketId: id, sprint: sp,
-              })}
+            onFill={(id, patch) => act(`fill out ${id}`, (cur) => fillOut(cur, id, patch))}
+            onDecide={decide}
+            onCloseOut={closeOut}
+            onMove={move}
             onAddSprint={(n) => act(`add release ${n}`, (cur) => addSprint(cur, n))}
             onRemoveSprint={(n) => act(`remove release ${n}`, (cur) => removeSprint(cur, n))}
             onShiftSprint={(n, d) => act(`reorder ${n}`, (cur) => shiftSprint(cur, n, d))}
