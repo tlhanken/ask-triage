@@ -57,6 +57,11 @@ your data. Releases and projects are edited in the app. Capacity, sprint length
 and weights have no editor yet; a new register takes them from
 `DEFAULT_SETTINGS` in `src/domain/schema.ts`.
 
+## Changing the code
+
+Start with `ARCHITECTURE.md`: where each rule lives, the invariants, and recipes for
+common changes. `AGENTS.md` is the short version for coding agents.
+
 ## Commands
 
     npm run dev        # dev server; the file endpoint is active, so saves reach disk

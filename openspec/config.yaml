@@ -1,5 +1,13 @@
 schema: spec-driven
 
+context: |
+  Read ARCHITECTURE.md before designing: it names the module that owns each rule.
+  Logic belongs in src/domain (pure, Store in, Store out); screens in src/ui.
+  The app has no real users yet: a format change bumps STORE_VERSION and adds no
+  conversion code; the server keeps a backup of the replaced file.
+  Every alert or warning states its consequence in words.
+  Defaults never stand in for decisions: fields a person decides start unset.
+
 # Project context (optional)
 # Add only constraints that should guide OpenSpec artifacts and workflows.
 # Include constraints an agent cannot infer by reading the code.
