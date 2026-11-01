@@ -793,10 +793,11 @@ export function recordDecision(
 }
 
 /**
- * Edit a ticket from its Fill out card. If the edit answers the last required
- * field, the ticket is accepted: it moves to Schedule, and the decision log says so.
+ * Edit a ticket — the one way every screen edits one (the Fill out card, the
+ * editor, the project table). If the edit answers the last required field, the
+ * ticket is accepted: it moves to Schedule, and the decision log says so.
  */
-export function fillOut(s: Store, id: number, patch: Partial<Ticket>, now = new Date()): Store {
+export function editTicket(s: Store, id: number, patch: Partial<Ticket>, now = new Date()): Store {
   const before = s.tickets.find((t) => t.id === id);
   if (!before) return s;
   const edited = updateTicket(s, id, patch, now);
@@ -810,6 +811,40 @@ export function addProject(s: Store, name: string): Store {
   const clean = name.trim();
   if (!clean || s.settings.projects.includes(clean)) return s;
   return { ...s, settings: { ...s.settings, projects: [...s.settings.projects, clean] } };
+}
+
+/**
+ * Rename a project in the list and on every ticket that carries it.
+ *
+ * A blank name, an unchanged one, or one already in the list is refused by
+ * returning the store unchanged, so nothing is recorded and two projects are never
+ * merged by accident. The decision log keeps the old name: it records what was
+ * true when each decision was made.
+ */
+export function renameProject(s: Store, from: string, to: string): Store {
+  const clean = to.trim();
+  if (!clean || clean === from || !s.settings.projects.includes(from) || s.settings.projects.includes(clean)) return s;
+  return {
+    ...s,
+    settings: { ...s.settings, projects: s.settings.projects.map((p) => (p === from ? clean : p)) },
+    tickets: s.tickets.map((t) =>
+      t.projects.includes(from) ? { ...t, projects: t.projects.map((p) => (p === from ? clean : p)) } : t),
+  };
+}
+
+/** Sort rank for a due date: dated first (by date), then "no hard date", then unanswered. */
+const dueRank = (t: Ticket): [number, string] =>
+  t.dueDate ? [0, t.dueDate] : t.noHardDate ? [1, ""] : [2, ""];
+
+/** A project's tickets, open ones by default, sorted by due date. */
+export function projectTickets(s: Store, project: string, includeClosed = false): Ticket[] {
+  return s.tickets
+    .filter((t) => t.projects.includes(project) && (includeClosed || isOpen(t)))
+    .sort((a, b) => {
+      const [ra, da] = dueRank(a);
+      const [rb, db] = dueRank(b);
+      return ra - rb || da.localeCompare(db) || a.id - b.id;
+    });
 }
 
 /** How many tickets currently carry a project. */

@@ -242,35 +242,85 @@ describe("project picker", () => {
   });
 });
 
-describe("managing the project list", () => {
-  const openManage = () => {
+describe("projects page", () => {
+  const openProjects = () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /^Projects$/ }));
-    fireEvent.click(screen.getByText(/Manage projects/));
   };
-  /** The manage row for a given project. */
-  const rowFor = (name: string) =>
-    screen.getAllByRole("listitem").find((li) => li.querySelector("b")?.textContent === name)!;
+  const list = () => screen.getByRole("complementary", { name: "Project list" });
+  const detail = () => screen.getByRole("region", { name: "Project detail" });
+  const pick = (name: string) => fireEvent.click(within(list()).getByRole("button", { name: new RegExp(`^${name}`) }));
 
-  it("adds a project from the manage panel", () => {
-    openManage();
-    fireEvent.change(screen.getByPlaceholderText(/New project name/), { target: { value: "Aurora" } });
-    fireEvent.click(screen.getByRole("button", { name: /add project/ }));
-    expect(screen.getByRole("button", { name: /^Aurora/ })).toBeTruthy();     // now in the switcher
+  it("lists the projects with counts, and shows the first", () => {
+    openProjects();
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(DEFAULT_PROJECTS.length);
+    expect(within(detail()).getByRole("heading", { level: 2 }).textContent).toBe("Atlas");
+    expect(within(detail()).getAllByText(/SSO for the partner portal/).length).toBeGreaterThan(0);
+  });
+
+  it("switching project switches the tickets", () => {
+    openProjects();
+    pick("Cinder");
+    expect(within(detail()).getByRole("heading", { level: 2 }).textContent).toBe("Cinder");
+    expect(within(detail()).getAllByText(/Webhook retries/).length).toBeGreaterThan(0);
+  });
+
+  it("searches the list", () => {
+    openProjects();
+    fireEvent.change(screen.getByLabelText("Search projects"), { target: { value: "bor" } });
+    expect(within(list()).getAllByRole("listitem").map((li) => li.textContent)).toEqual([expect.stringMatching(/^Borealis/)]);
+  });
+
+  it("creates a project from the top of the list and selects it", () => {
+    openProjects();
+    fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "Aurora" } });
+    fireEvent.click(screen.getByRole("button", { name: /New project/ }));
+    expect(within(detail()).getByRole("heading", { level: 2 }).textContent).toBe("Aurora");
+  });
+
+  it("renames in place, carrying the name to its tickets, and refuses a name in use", () => {
+    openProjects();
+    fireEvent.click(within(detail()).getByRole("button", { name: "Rename" }));
+    const input = screen.getByLabelText("New name");
+    fireEvent.change(input, { target: { value: "Cinder" } });
+    expect(screen.getByText(/already a project/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save name" })).toHaveProperty("disabled", true);
+    fireEvent.change(input, { target: { value: "Atlas 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    expect(within(detail()).getByRole("heading", { level: 2 }).textContent).toBe("Atlas 2");
+    expect(within(detail()).getAllByText(/SSO for the partner portal/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    expect(screen.getByText("rename project Atlas to Atlas 2")).toBeTruthy();
   });
 
   it("names how many tickets a removal detaches, then detaches them", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    openManage();
+    openProjects();
     const used = freshStore().tickets.filter((t) => t.projects.includes("Atlas")).length;
     expect(used).toBeGreaterThan(0);
-
-    fireEvent.click(within(rowFor("Atlas")).getByRole("button", { name: /remove/ }));
-
-    expect(confirmSpy.mock.calls[0][0]).toContain(`${used} ticket`);         // the count is named
-    expect(screen.queryByRole("button", { name: /^Atlas/ })).toBeNull();     // gone from the switcher
-    expect(rowFor("Atlas")).toBeUndefined();
+    fireEvent.click(within(detail()).getByRole("button", { name: "Remove" }));
+    expect(confirmSpy.mock.calls[0][0]).toContain(`${used} ticket`);
+    expect(within(list()).queryByRole("button", { name: /^Atlas/ })).toBeNull();
     confirmSpy.mockRestore();
+  });
+
+  it("edits a due date in the row, recorded in History", () => {
+    openProjects();
+    const row = within(detail()).getAllByRole("row").find((r) => r.textContent?.includes("SSO for the partner portal"))!;
+    fireEvent.change(within(row).getByLabelText("Due date"), { target: { value: "2027-02-01" } });
+    expect((within(row).getByLabelText("Due date") as HTMLInputElement).value).toBe("2027-02-01");
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    expect(screen.getByText(/^due date for \d+$/)).toBeTruthy();
+  });
+
+  it("shows a fit warning in Check's words", () => {
+    let s = readyStore();
+    const id = s.tickets.find((t) => t.projects.includes("Atlas"))!.id;
+    s = moveTicketToSprint(s, id, "v0.25");
+    s = { ...s, tickets: s.tickets.map((t) => (t.id === id ? { ...t, dueDate: "2026-11-20", noHardDate: false } : t)) };
+    startWith(s);
+    fireEvent.click(screen.getByRole("button", { name: /^Projects$/ }));
+    expect(within(detail()).getByText("Ships late")).toBeTruthy();
   });
 
   it("offers to add a project the picker cannot find, and attaches it", () => {
@@ -280,36 +330,16 @@ describe("managing the project list", () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "Aurora" } });
     expect(within(screen.getByRole("listbox")).queryAllByRole("option")).toHaveLength(0);
-
     fireEvent.click(screen.getByRole("button", { name: /add .Aurora. to the list/ }));
-    expect(screen.getByRole("button", { name: /Aurora ✕/ })).toBeTruthy();   // attached to the ticket
+    expect(screen.getByRole("button", { name: /Aurora ✕/ })).toBeTruthy();
   });
 
   it("keeps a project name the tickets still carry when the list has forgotten it", () => {
     const s = freshStore();
-    localStorage.setItem("revel-priority-tracker-v1", JSON.stringify({
-      ...s, settings: { ...s.settings, projects: ["Atlas"] },
-    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, settings: { ...s.settings, projects: ["Atlas"] } }));
     const loaded = load();
     expect(loaded.settings.projects).toContain("Atlas");
     expect(loaded.settings.projects).toContain("Platform");   // reclaimed from the tickets
-  });
-});
-
-describe("project view", () => {
-  it("lists the tickets for a project", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Projects$/ }));
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain("Atlas");
-    expect(screen.getAllByText(/SSO for the partner portal/).length).toBeGreaterThan(0);
-  });
-
-  it("switching project switches the tickets", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /^Projects$/ }));
-    fireEvent.click(screen.getByRole("button", { name: /^Cinder/ }));
-    expect(screen.getByRole("heading", { level: 2 }).textContent).toContain("Cinder");
-    expect(screen.getAllByText(/Webhook retries/).length).toBeGreaterThan(0);
   });
 });
 

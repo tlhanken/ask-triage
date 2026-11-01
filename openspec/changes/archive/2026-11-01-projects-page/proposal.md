@@ -35,7 +35,7 @@ asked for.
 
 - `ticket-tracking`: "Editing the project list" gains rename. A new
   requirement covers the project date view. "A long project list scales" is
-  met by the list. Spec deltas will be written once this design is agreed.
+  met by the list. Spec deltas are in `specs/`.
 
 ## Impact
 

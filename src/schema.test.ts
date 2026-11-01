@@ -8,9 +8,9 @@ import {
 } from "./schema";
 import {
   type Store, HISTORY_CAP, STORE_VERSION, addProject, addSprint, applyCloseOut, applyPlan, blankTicket,
-  checkReport, closeOutQueue, compareSprints, createTicket, defaultRevisit, deleteTicket, explainPlan, fillOut,
+  checkReport, closeOutQueue, compareSprints, createTicket, defaultRevisit, deleteTicket, explainPlan, editTicket,
   fillOutQueue, fillReleaseDates, freshStore, moveTicketToSprint, nextRelease, optimizePlan, pipeline,
-  projectUsage, planRevert, recordDecision, readStore, removeProject, removeSprint, revertTo, resetToSeed,
+  projectTickets, projectUsage, planRevert, renameProject, recordDecision, readStore, removeProject, removeSprint, revertTo, resetToSeed,
   lastSetAside, revisitDue, scheduleQueue, serialize, shiftSprint, slippedIn, updateSprint, updateTicket,
   withHistory,
 } from "./store";
@@ -648,6 +648,60 @@ describe("one way in for every load path", () => {
   });
 });
 
+describe("renaming a project", () => {
+  it("carries the new name to every ticket, in the same place in the list", () => {
+    const s = freshStore();
+    const carried = s.tickets.filter((t) => t.projects.includes("Atlas")).map((t) => t.id);
+    const r = renameProject(s, "Atlas", "Atlas Prime");
+    expect(r.settings.projects.indexOf("Atlas Prime")).toBe(s.settings.projects.indexOf("Atlas"));
+    expect(r.settings.projects).not.toContain("Atlas");
+    expect(r.tickets.filter((t) => t.projects.includes("Atlas Prime")).map((t) => t.id)).toEqual(carried);
+    expect(r.tickets.some((t) => t.projects.includes("Atlas"))).toBe(false);
+  });
+
+  it("never merges: a name already in the list, a blank or an unchanged one changes nothing", () => {
+    const s = freshStore();
+    expect(renameProject(s, "Atlas", "Cinder")).toBe(s);
+    expect(renameProject(s, "Atlas", "  ")).toBe(s);
+    expect(renameProject(s, "Atlas", "Atlas")).toBe(s);
+    expect(renameProject(s, "Nope", "Other")).toBe(s);
+    expect(withHistory(s, "rename", (cur) => renameProject(cur, "Atlas", "Cinder"), NOW).history).toHaveLength(0);
+  });
+
+  it("is one revertible action, and leaves the decision log alone", () => {
+    let s = recordDecision(freshStore(), 1, "Defer", "later", null, NOW);
+    const before = s;
+    s = withHistory(s, "rename", (cur) => renameProject(cur, "Delta", "Delta 2"), NOW);
+    expect(s.decisions).toEqual(before.decisions);
+    const back = revertTo(s, 0, NOW);
+    expect(back.settings.projects).toEqual(before.settings.projects);
+    expect(back.tickets).toEqual(before.tickets);
+  });
+});
+
+describe("a project's tickets by due date", () => {
+  it("puts dated work first by date, then no hard date, then unanswered", () => {
+    let s = freshStore();
+    const atlas = projectTickets(s, "Atlas").map((t) => t.id);
+    expect(atlas.length).toBeGreaterThan(1);
+    s = updateTicket(s, atlas[0], { dueDate: null, noHardDate: true }, NOW);
+    const sorted = projectTickets(s, "Atlas");
+    const rank = (t: Ticket) => (t.dueDate ? 0 : t.noHardDate ? 1 : 2);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(rank(sorted[i - 1])).toBeLessThanOrEqual(rank(sorted[i]));
+      if (sorted[i - 1].dueDate && sorted[i].dueDate) expect(sorted[i - 1].dueDate! <= sorted[i].dueDate!).toBe(true);
+    }
+  });
+
+  it("an edit anywhere that makes a ticket ready records the accept", () => {
+    let s = freshStore();
+    const t = s.tickets.find((x) => x.priority && x.type)!;
+    s = editTicket(s, t.id, { estimate: 1, noHardDate: false, dueDate: t.dueDate ?? null }, NOW);
+    if (!isReady(s.tickets.find((x) => x.id === t.id)!)) s = editTicket(s, t.id, { dueDate: "2027-01-01" }, NOW);
+    expect(s.decisions.map((d) => [d.action, d.ticketId])).toEqual([["Accept", t.id]]);
+  });
+});
+
 describe("project picker", () => {
   const many = Array.from({ length: 500 }, (_, i) => `Project ${String(i).padStart(3, "0")}`);
 
@@ -730,14 +784,14 @@ describe("ready to schedule", () => {
   it("filling the last required field accepts the ticket and moves it to Schedule", () => {
     let s = freshStore();
     const id = s.tickets.find((t) => t.priority !== null && t.type !== null)!.id;
-    s = fillOut(s, id, { estimate: 2 }, NOW);
+    s = editTicket(s, id, { estimate: 2 }, NOW);
     const t = s.tickets.find((x) => x.id === id)!;
-    if (!t.dueDate) s = fillOut(s, id, { noHardDate: true }, NOW);
+    if (!t.dueDate) s = editTicket(s, id, { noHardDate: true }, NOW);
     expect(scheduleQueue(s, NOW).map((x) => x.id)).toContain(id);
     expect(fillOutQueue(s, NOW).map((x) => x.ticket.id)).not.toContain(id);
     expect(s.decisions.filter((d) => d.action === "Accept").map((d) => d.ticketId)).toEqual([id]);
     // a further edit records no second accept
-    s = fillOut(s, id, { estimate: 3 }, NOW);
+    s = editTicket(s, id, { estimate: 3 }, NOW);
     expect(s.decisions.filter((d) => d.action === "Accept")).toHaveLength(1);
   });
 

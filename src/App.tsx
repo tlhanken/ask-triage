@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type DecisionAction, type Ticket, queueHealth } from "./schema";
 import {
   type CloseOutChoice, type Move, type Snapshot, type Store, addProject, addSprint, applyCloseOut, applyPlan,
-  blankTicket, createTicket, deleteTicket, fillOut, fillReleaseDates, load, moveTicketToSprint, pipeline,
-  readStore, recordDecision, removeProject, removeSprint, resetToSeed, planRevert, revertTo, save,
-  serialize, shiftSprint, updateTicket, updateSprint, withHistory,
+  blankTicket, createTicket, deleteTicket, editTicket, fillReleaseDates, load, moveTicketToSprint, pipeline,
+  readStore, recordDecision, removeProject, removeSprint, renameProject, resetToSeed, planRevert, revertTo, save,
+  serialize, shiftSprint, updateSprint, withHistory,
 } from "./store";
 import {
   currentEtag, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
@@ -251,7 +251,7 @@ export default function App() {
             step={step}
             onStep={setStep}
             onEdit={(t) => setEditing({ ticket: t })}
-            onFill={(id, patch) => act(`fill out ${id}`, (cur) => fillOut(cur, id, patch))}
+            onFill={(id, patch) => act(`fill out ${id}`, (cur) => editTicket(cur, id, patch))}
             onDecide={decide}
             onCloseOut={closeOut}
             onMove={move}
@@ -268,7 +268,9 @@ export default function App() {
           <Projects
             store={store}
             onEdit={(t) => setEditing({ ticket: t })}
+            onEditTicket={(id, patch) => act(`due date for ${id}`, (cur) => editTicket(cur, id, patch))}
             onAddProject={(n) => act(`add project ${n}`, (cur) => addProject(cur, n))}
+            onRenameProject={(from, to) => act(`rename project ${from} to ${to}`, (cur) => renameProject(cur, from, to))}
             onRemoveProject={(n) => act(`remove project ${n}`, (cur) => removeProject(cur, n))}
           />
         )}
@@ -314,7 +316,7 @@ export default function App() {
           onAddProject={(n) => act(`add project ${n}`, (cur) => addProject(cur, n))}
           onCancel={() => setEditing(null)}
           onSave={(draft, id) => {
-            if (id) act(`edit ${id}`, (cur) => updateTicket(cur, id, draft));
+            if (id) act(`edit ${id}`, (cur) => editTicket(cur, id, draft));
             setEditing(null);
           }}
           onDelete={(id) => {

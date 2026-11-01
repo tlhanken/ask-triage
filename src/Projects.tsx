@@ -1,52 +1,68 @@
 import { useMemo, useState } from "react";
-import { type Ticket, STATES, derive, isOpen, matchProjects, priorityLabel } from "./schema";
-import { type Store, projectUsage } from "./store";
+import {
+  type Ticket, estimateLabel, isOpen, label, matchProjects, priorityLabel, riskAlerts,
+} from "./schema";
+import { type Store, projectTickets, projectUsage } from "./store";
+import { DueField } from "./fields";
 
-/** Project view: pick a project, see every ticket on it, grouped by state. */
+/**
+ * Projects: the list on the left, the selected project on the right.
+ *
+ * A project is a name only. The detail is the project's tickets by due date, with
+ * the date editable in the row and a fit warning in the same words Check uses.
+ */
 
 interface Props {
   store: Store;
   onEdit: (t: Ticket) => void;
+  onEditTicket: (id: number, patch: Partial<Ticket>) => void;
   onAddProject: (name: string) => void;
+  onRenameProject: (from: string, to: string) => void;
   onRemoveProject: (name: string) => void;
 }
 
-export default function Projects({ store, onEdit, onAddProject, onRemoveProject }: Props) {
+/** The risks that are about dates, shown in the table's fit column. */
+const FIT_KINDS = ["PAST-DUE", "WONT-FIT", "STARTS-LATE"];
+
+export default function Projects({ store, onEdit, onEditTicket, onAddProject, onRenameProject, onRemoveProject }: Props) {
   const list = store.settings.projects;
   const [chosen, setChosen] = useState(list[0] ?? "");
-  const [showClosed, setShowClosed] = useState(false);
+  const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
-  const [manageQuery, setManageQuery] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
 
-  // The chosen project may have just been removed; fall back rather than showing
-  // an empty view for something that no longer exists.
+  // The chosen project may have just been removed or renamed; fall back rather than
+  // showing an empty view for something that no longer exists.
   const selected = list.includes(chosen) ? chosen : (list[0] ?? "");
-
-  const all = store.tickets.filter((t) => t.projects.includes(selected));
-  const shown = (showClosed ? all : all.filter(isOpen))
-    .sort((a, b) => derive(b, store.settings).score - derive(a, store.settings).score);
 
   // One pass over the tickets, not one pass per project. At a few hundred
   // projects the per-project scan is hundreds of full scans on every render.
   const counts = useMemo(() => {
-    const tally = new Map<string, { open: number; total: number; critical: number }>(
-      list.map((p) => [p, { open: 0, total: 0, critical: 0 }]),
-    );
+    const tally = new Map<string, { open: number; critical: number }>(list.map((p) => [p, { open: 0, critical: 0 }]));
     for (const t of store.tickets) {
-      const live = isOpen(t);
-      const critical = live && t.priority === "Critical";
+      if (!isOpen(t)) continue;
       for (const p of t.projects) {
         const c = tally.get(p);
         if (!c) continue;                     // a project no longer on the list
-        c.total += 1;
-        if (live) c.open += 1;
-        if (critical) c.critical += 1;
+        c.open += 1;
+        if (t.priority === "Critical") c.critical += 1;
       }
     }
-    return list.map((p) => ({ p, ...tally.get(p)! }));
+    return tally;
   }, [store.tickets, list]);
 
-  const manage = matchProjects(manageQuery, [], list);
+  const found = matchProjects(query, [], list);
+  const rows = projectTickets(store, selected, showClosed);
+  const closedCount = store.tickets.filter((t) => t.projects.includes(selected) && !isOpen(t)).length;
+
+  const create = () => {
+    const name = newName.trim();
+    if (!name || list.includes(name)) return;
+    onAddProject(name);
+    setChosen(name);
+    setNewName("");
+  };
 
   const tryRemove = (name: string) => {
     const used = projectUsage(store, name);
@@ -57,109 +73,131 @@ export default function Projects({ store, onEdit, onAddProject, onRemoveProject 
     if (window.confirm(msg)) onRemoveProject(name);
   };
 
-  const grouped = STATES
-    .map((state) => ({ state, tickets: shown.filter((t) => t.state === state) }))
-    .filter((g) => g.tickets.length > 0);
+  const c = counts.get(selected) ?? { open: 0, critical: 0 };
 
   return (
-    <div>
-      <div className="toolbar">
-        <span className="dim small">Project</span>
-        {counts.map(({ p, open, critical }) => (
-          <button key={p} className={"chip " + (p === selected ? "on" : "")} onClick={() => setChosen(p)}>
-            {p} <span className="dim">{open}{critical > 0 ? ` · ${critical} crit` : ""}</span>
+    <div className="projects">
+      <aside className="plist" aria-label="Project list">
+        <form className="plist-new" onSubmit={(e) => { e.preventDefault(); create(); }}>
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New project name"
+                 aria-label="New project name" />
+          <button type="submit" className="pick" disabled={!newName.trim() || list.includes(newName.trim())}>
+            + New project
           </button>
-        ))}
-        <div className="spacer" />
-        <label className="small dim">
-          <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
-          {" "}show closed
-        </label>
-      </div>
-
-      <details className="tier">
-        <summary>
-          Manage projects{" "}
-          <span className="dim small">
-            {list.length} in the list — removing one detaches it from every ticket
-          </span>
-        </summary>
-
-        <div className="toolbar">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)}
-                 placeholder="New project name"
-                 onKeyDown={(e) => {
-                   if (e.key === "Enter" && newName.trim()) {
-                    e.preventDefault(); onAddProject(newName); setNewName("");
-                   }
-                 }} />
-          <button onClick={() => { onAddProject(newName); setNewName(""); }} disabled={!newName.trim()}>
-            add project
-          </button>
-          <div className="spacer" />
-          <input value={manageQuery} onChange={(e) => setManageQuery(e.target.value)}
-                 placeholder="Filter projects…" />
-        </div>
-
-        <ul className="alerts">
-          {manage.shown.map((p) => {
-            const used = projectUsage(store, p);
+        </form>
+        {newName.trim() && list.includes(newName.trim()) && (
+          <div className="small dim">“{newName.trim()}” is already in the list.</div>
+        )}
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects…"
+               aria-label="Search projects" />
+        <ul>
+          {found.shown.map((p) => {
+            const n = counts.get(p) ?? { open: 0, critical: 0 };
             return (
               <li key={p}>
-                <b>{p}</b>
-                <span className="dim small">{used} ticket{used === 1 ? "" : "s"}</span>
-                <div className="spacer" />
-                <button className="mini" onClick={() => tryRemove(p)}>remove</button>
+                <button className={p === selected ? "on" : ""} aria-current={p === selected || undefined}
+                        onClick={() => { setChosen(p); setRenaming(null); }}>
+                  <span>{p}</span>
+                  <span className="dim small">{n.open}{n.critical > 0 ? ` · ${n.critical} crit` : ""}</span>
+                </button>
               </li>
             );
           })}
-          {manage.shown.length === 0 && <li className="dim">No project matches that filter.</li>}
+          {found.shown.length === 0 && <li className="dim small">No project matches.</li>}
         </ul>
-        {manage.total > manage.shown.length && (
-          <div className="dim small">
-            showing {manage.shown.length} of {manage.total} — filter to narrow
-          </div>
+        <div className="dim small">
+          {found.total > found.shown.length
+            ? `showing ${found.shown.length} of ${found.total} — search to narrow`
+            : `${list.length} project${list.length === 1 ? "" : "s"}`}
+        </div>
+      </aside>
+
+      <section className="pdetail" aria-label="Project detail">
+        {!selected && <div className="empty">No projects yet. Create one on the left.</div>}
+
+        {selected && (
+          <>
+            <div className="pdetail-head">
+              {renaming === null ? (
+                <>
+                  <h2>{selected}</h2>
+                  <button onClick={() => setRenaming(selected)}>Rename</button>
+                  <button className="danger" onClick={() => tryRemove(selected)}>Remove</button>
+                </>
+              ) : (
+                <Rename from={selected} taken={list} onCancel={() => setRenaming(null)}
+                        onSave={(to) => { onRenameProject(selected, to); setChosen(to); setRenaming(null); }} />
+              )}
+              <div className="spacer" />
+              <span className="dim small">{c.open} open{c.critical > 0 ? ` · ${c.critical} critical` : ""}</span>
+            </div>
+
+            {rows.length === 0 ? (
+              <div className="empty">Nothing open on {selected} right now.</div>
+            ) : (
+              <table className="pdates">
+                <thead>
+                  <tr><th>Ticket</th><th>Priority</th><th>Ships in</th><th>Due</th><th>Estimate</th><th>Fit</th></tr>
+                </thead>
+                <tbody>
+                  {rows.map((t) => {
+                    const fit = riskAlerts(t, store.settings).filter((a) => FIT_KINDS.includes(a.kind));
+                    return (
+                      <tr key={t.id} className={isOpen(t) ? "" : "dim"}>
+                        <td>
+                          <button className="tname" onClick={() => onEdit(t)}>
+                            <span className="mono dim">{label(t.id)}</span> {t.name}
+                          </button>
+                        </td>
+                        <td className={t.priority === "Critical" ? "tag Decline" : ""}>{priorityLabel(t.priority)}</td>
+                        <td>{t.sprint ?? <span className="dim">not scheduled</span>}</td>
+                        <td>
+                          {isOpen(t)
+                            ? <DueField dueDate={t.dueDate} noHardDate={t.noHardDate} onChange={(v) => onEditTicket(t.id, v)} />
+                            : (t.dueDate ?? "—")}
+                        </td>
+                        <td>{estimateLabel(t.estimate)}</td>
+                        <td>
+                          {fit.length === 0 ? <span className="dim">—</span> : fit.map((a) => (
+                            <div key={a.kind} title={a.why}>
+                              <span className="chip mini flag">{a.what}</span> <span className="small">{a.why}</span>
+                            </div>
+                          ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {closedCount > 0 && (
+              <label className="small dim" style={{ display: "block", marginTop: 12 }}>
+                <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />{" "}
+                show {closedCount} closed
+              </label>
+            )}
+          </>
         )}
-      </details>
-
-      <h2 style={{ margin: "4px 0 12px" }}>{selected || "no project"} — {shown.length} {showClosed ? "tickets" : "open"}</h2>
-
-      {shown.length === 0 && <div className="empty">Nothing on {selected} right now.</div>}
-
-      {grouped.map(({ state, tickets }) => (
-        <div className="group" key={state}>
-          <div className="group-head">{state} <span className="dim">({tickets.length})</span></div>
-          <table>
-            <thead>
-              <tr><th>TKT</th><th>Name</th><th>Projects</th><th>Type</th><th>Due</th><th>Sprint</th><th>Score</th><th>Flags</th></tr>
-            </thead>
-            <tbody>
-              {tickets.map((t) => {
-                const d = derive(t, store.settings);
-                return (
-                  <tr key={t.id} className="clickable" onClick={() => onEdit(t)}>
-                    <td className="mono">{String(d.id).padStart(2, "0")}</td>
-                    <td>{d.name}</td>
-                    <td>{d.projects.map((p) => <span className="chip mini" key={p}>{p}</span>)}</td>
-                    <td className={d.priority === "Critical" ? "tag Decline" : ""}>{priorityLabel(d.priority)}</td>
-                    <td className="dim">{d.type ?? "—"}</td>
-                    <td>{d.dueDate ?? "—"}</td>
-                    <td>{d.sprint ?? "—"}</td>
-                    <td className="mono">{d.score}</td>
-                    <td>{d.flags.map((f) => <span className="chip mini flag" key={f}>{f}</span>)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ))}
-
-      {!showClosed && all.some((t) => !isOpen(t)) && (
-        <div className="dim small" style={{ marginTop: 12 }}>
-          {all.filter((t) => !isOpen(t)).length} closed ticket(s) hidden — tick “show closed”.
-        </div>
-      )}
+      </section>
     </div>
+  );
+}
+
+/** Rename in place. A name already in the list is refused before it is sent. */
+function Rename({ from, taken, onSave, onCancel }: {
+  from: string; taken: readonly string[]; onSave: (to: string) => void; onCancel: () => void;
+}) {
+  const [to, setTo] = useState(from);
+  const clean = to.trim();
+  const problem = !clean ? "A name is needed." : clean !== from && taken.includes(clean) ? `“${clean}” is already a project.` : null;
+  return (
+    <form className="rename" onSubmit={(e) => { e.preventDefault(); if (!problem && clean !== from) onSave(clean); }}>
+      <input autoFocus value={to} onChange={(e) => setTo(e.target.value)} aria-label="New name"
+             onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }} />
+      <button type="submit" className="pick" disabled={!!problem || clean === from}>Save name</button>
+      <button type="button" onClick={onCancel}>Cancel</button>
+      {problem && <span className="small tag Decline">{problem}</span>}
+    </form>
   );
 }

@@ -108,7 +108,9 @@ current register, so the history stays small however many tickets there are.
                             a release, or let auto-optimize propose and explain.
                3 Check      what is going wrong per release, and close-out for
                             releases that shipped with work still open.
-    Projects   Tickets by project. The project list is managed here.
+    Projects   The project list (search, create, rename, remove) beside the
+               selected project's open tickets by due date. Dates are edited in
+               the row, with a fit warning in Check's words.
     Register   Everything, filterable and sortable.
     Decisions  What was decided, exportable as markdown, CSV or JSON.
     History    Every change, revertible. A revert is itself recorded.
@@ -137,8 +139,13 @@ current register, so the history stays small however many tickets there are.
 
 ## Not done yet
 
-- The project view's switcher is still one chip per project, and projects cannot be
-  renamed. See `openspec/changes/projects-page`.
+- Capacity, sprint length and scoring weights have no editor; they come from
+  `DEFAULT_SETTINGS` in `src/schema.ts` when a register is created.
+- Capacity is one number per release. Type is required so that per-team capacity
+  (Driver, Server, …) can be added without another migration.
+- A change made in the last 600ms before a tab closes reaches browser storage but
+  not the register file. The next startup reads the file, so that change is lost.
+
 
 ## License
 

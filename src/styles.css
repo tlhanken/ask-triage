@@ -318,3 +318,32 @@ nav.steps .count {
 .closeout-row legend { padding: 0 4px; }
 label.radio { font-size: 13px; color: var(--ink); display: flex; }
 input[aria-invalid="true"] { border-color: var(--bad); }
+
+/* ---------------------------------------------------------------- Projects */
+.projects { display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }
+.plist { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 70px; }
+.plist-new { display: flex; gap: 6px; }
+.plist-new input { flex: 1; min-width: 0; }
+.plist ul { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
+.plist li button {
+  display: flex; justify-content: space-between; width: 100%; padding: 6px 10px; margin-bottom: 2px;
+  background: transparent; color: var(--ink); border: 1px solid transparent; border-radius: 6px; text-align: left;
+}
+.plist li button.on { background: var(--panel2); border-color: var(--accent); }
+.pdetail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.pdetail-head h2 { margin: 0; }
+.rename { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+table.pdates td { vertical-align: top; }
+table.pdates .tname { background: none; border: 0; color: var(--ink); padding: 0; text-align: left; }
+table.pdates .due-field { flex-direction: row; align-items: center; gap: 8px; }
+table.pdates .due-field label { flex-direction: row; align-items: center; gap: 4px; }
+@media (max-width: 760px) { .projects { grid-template-columns: 1fr; } .plist { position: static; } }
+.projects input:not([type="checkbox"]), .projects select {
+  background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+}
+.projects .pdetail-head button, .projects .rename button, .projects .plist-new button {
+  background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px;
+}
+.projects button.pick { border-color: var(--accent); }
+.projects button.danger { border-color: #7a2f2a; color: #ffd7d5; }
+.projects button:disabled { opacity: .45; cursor: default; }
