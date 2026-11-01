@@ -25,7 +25,7 @@ import {
   label,
   queueHealth,
 } from "./schema";
-import { SEED_TICKETS } from "./seed";
+import { seedTickets } from "./seed";
 
 /**
  * store.ts — pure state transitions + persistence. No DOM in here.
@@ -82,7 +82,7 @@ const clone = (t: Ticket): Ticket => ({
 });
 
 export function freshStore(): Store {
-  const tickets = SEED_TICKETS.map(clone);
+  const tickets = seedTickets();
   return {
     version: 3,
     tickets,

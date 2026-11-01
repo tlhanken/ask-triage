@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, addDays, backlog,
   audit, auditTicket, computeFlags, defaultSprints, derive, externalLabel, fillState, findSprint, hasShipped, iso,
@@ -15,7 +15,8 @@ import {
 } from "./store";
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, stamp, toJson } from "./exporters";
 
-/** A due date N days from the real clock, since derive() defaults to now. */
+/** A due date N days from now. The clock is frozen at NOW below, so "now" here,
+ *  in freshStore(), in the seed, and in every `now = new Date()` default agree. */
 const isoFromNow = (days: number): string => {
   const d = new Date(Date.now() + days * 86_400_000);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -31,6 +32,13 @@ const mk = (over: Partial<Ticket>): Ticket => ({
 
 // Fixed clock: these numbers are the ones the spreadsheet computed for the same rows.
 const NOW = new Date("2026-10-18T12:00:00Z");
+
+// Freeze the date for the whole file. Fixtures built from the real clock (the seed,
+// defaultSprints(), isoFromNow) would otherwise drift away from NOW day by day,
+// and tests that compare the two start failing a few days after they were written.
+// Only Date is faked; timers stay real.
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"], now: NOW }); });
+afterAll(() => { vi.useRealTimers(); });
 
 describe("derivation matches the spreadsheet", () => {
   const caseA = mk({

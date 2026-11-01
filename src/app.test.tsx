@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import { DEFAULT_PROJECTS, derive, revisitInWeeks } from "./schema";
 import { freshStore, load, undecided } from "./store";
 
+// Freeze the date so the seed, the release dates and "today" never drift apart.
+// Only Date is faked; timers stay real so React and the autosave debounce run.
+beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-18T12:00:00Z") }); });
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  vi.useRealTimers();
 });
 
 const cols = () => Array.from(document.querySelectorAll(".col"));
