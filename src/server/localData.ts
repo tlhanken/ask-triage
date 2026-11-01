@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import nodePath from "node:path";
 
@@ -21,6 +22,24 @@ export interface WriteDecision {
 }
 
 const ENDPOINT = "/__data";
+
+/**
+ * The version of a register file: a hash of its bytes, quoted as an HTTP entity tag.
+ *
+ * A hash rather than a counter stored in the register, so there is nothing to
+ * migrate, and so a hand edit or a restored backup changes the version too.
+ */
+export const etagOf = (raw: string): string => `"${createHash("sha256").update(raw, "utf8").digest("hex")}"`;
+
+/** The stored format version of a register, or null when it has none or is not JSON. */
+export const formatVersion = (raw: string): number | null => {
+  try {
+    const v = (JSON.parse(raw) as { version?: unknown })?.version;
+    return typeof v === "number" ? v : null;
+  } catch {
+    return null;
+  }
+};
 
 const ticketCount = (raw: string): number | null => {
   try {
@@ -57,6 +76,43 @@ export function decideWrite(existingRaw: string | null, incomingRaw: string): Wr
     };
   }
   return { allow: true, existingTickets, incomingTickets: incoming };
+}
+
+/**
+ * Refuse a write that was based on a version of the file that is no longer current.
+ *
+ * The client sends back the ETag it last saw as If-Match. Without it a write is
+ * accepted only to establish a file that does not exist yet, so a plain POST cannot
+ * skip the check. A stale write is how a second tab, or a second machine, would
+ * otherwise overwrite the first one's work without anyone being told.
+ */
+export function decideVersion(existingRaw: string | null, ifMatch: string): { allow: true } | { allow: false; reason: string } {
+  if (existingRaw === null) {
+    return ifMatch
+      ? { allow: false, reason: "stale: the register file was removed since this copy was loaded" }
+      : { allow: true };
+  }
+  if (!ifMatch) {
+    return { allow: false, reason: "stale: a register file already exists; load it before writing over it" };
+  }
+  if (ifMatch !== etagOf(existingRaw)) {
+    return { allow: false, reason: "stale: another tab or machine changed the register file since this copy was loaded" };
+  }
+  return { allow: true };
+}
+
+/**
+ * Where to keep the old file when a write changes the register's format version.
+ *
+ * The register is untracked, so a format change that went wrong would have no commit
+ * to fall back on. The old file is copied beside the register, named for the format
+ * it was in and when it was replaced, and never touched again.
+ */
+export function backupPath(file: string, version: number | null, now = new Date()): string {
+  const dir = nodePath.dirname(file);
+  const base = nodePath.basename(file, nodePath.extname(file));
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  return nodePath.join(dir, `${base}.v${version ?? "unknown"}.${stamp}.json`);
 }
 
 interface Req {
@@ -127,7 +183,8 @@ export function localDataFile(file = nodePath.resolve(process.cwd(), "data/regis
       fs.readFile(file, "utf8")
         .then((text) => {
           res.setHeader("content-type", "application/json");
-          res.end(text);
+          res.setHeader("etag", etagOf(text));
+          res.end(req.method === "HEAD" ? undefined : text);
         })
         .catch(() => {
           res.statusCode = 204;                 // no file yet is not an error
@@ -151,17 +208,26 @@ export function localDataFile(file = nodePath.resolve(process.cwd(), "data/regis
     req.on("end", () => {
       void (async () => {
         const existing = await fs.readFile(file, "utf8").catch(() => null);
-        const verdict = decideWrite(existing, body);
-        if (!verdict.allow) {
+        const refuse = (reason: string, stale: boolean) => {
           res.statusCode = 409;                 // conflict: nothing was written
           res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ ok: false, reason: verdict.reason }));
-          return;
-        }
+          res.end(JSON.stringify({ ok: false, stale, reason }));
+        };
+        const version = decideVersion(existing, header(req, "if-match"));
+        if (!version.allow) return refuse(version.reason, true);
+        const verdict = decideWrite(existing, body);
+        if (!verdict.allow) return refuse(verdict.reason ?? "refused", false);
         try {
+          let backup: string | undefined;
+          if (existing !== null && formatVersion(existing) !== formatVersion(body)) {
+            backup = backupPath(file, formatVersion(existing));
+            await writeAtomically(backup, existing);
+          }
           await writeAtomically(file, body);
+          const etag = etagOf(body);
           res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ ok: true, file, tickets: verdict.incomingTickets }));
+          res.setHeader("etag", etag);
+          res.end(JSON.stringify({ ok: true, file, etag, tickets: verdict.incomingTickets, ...(backup ? { backup } : {}) }));
         } catch (err: unknown) {
           res.statusCode = 500;
           res.end(JSON.stringify({ ok: false, error: String(err) }));

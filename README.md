@@ -78,10 +78,20 @@ Two layers, deliberately:
                           `revel-priority-tracker-v1`. Do NOT rename that key: it
                           identifies existing saves, and renaming it orphans them.
 
-On startup the browser's copy wins. The file is adopted only when the browser has no
-history and no decisions, and an empty file is ignored outright — so an accidental
-empty write can never take over. Every change is written to the file 600ms later,
-while a server is running.
+While a server is running, the file is the source of truth and browser storage is a
+cache of it. On startup the file is read first, whatever the browser holds, and
+nothing is written until that read has finished. Every change is then written to
+the file 600ms later. An empty file is ignored, so an accidental empty write can
+never take over, and a file this version cannot read is never written over
+automatically.
+
+Every write says which version of the file it was based on. If another tab or
+machine has changed the file since, the write is refused and the tab stops saving.
+A banner offers to download this tab's copy, or to reload the file.
+
+When a save changes the register's format version, the server first keeps the old
+file beside it as `register.v<old>.<timestamp>.json` and never touches it again.
+Delete those copies once the new format is trusted.
 
 The file also carries the last 25 state snapshots, which is what the History tab
 reverts to.
@@ -125,8 +135,6 @@ reverts to.
 - Nothing ever reaches Done, Blocked has no way back, and the triage capacity
   meter counts decisions while capacity everywhere else counts work units. The
   fix is one planning workflow: see `openspec/changes/plan-workflow`.
-- A second tab or machine can silently overwrite the register file. See
-  `openspec/changes/file-is-source-of-truth`.
 
 ## License
 

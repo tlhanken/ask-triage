@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { type DecisionAction, type Ticket } from "./schema";
 import {
   type Move, type Snapshot, type Store, addProject, addSprint, applyPlan, blankTicket, createTicket,
@@ -9,9 +9,9 @@ import {
   serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
-  fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
+  currentEtag, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
 } from "./persist";
-import { download } from "./exporters";
+import { download, stamp } from "./exporters";
 import Triage from "./Triage";
 import Sprints from "./Sprints";
 import Projects from "./Projects";
@@ -34,8 +34,22 @@ export default function App() {
   const [editing, setEditing] = useState<{ ticket: Ticket } | null>(null);
   const [creating, setCreating] = useState(false);
   const [editingSprint, setEditingSprint] = useState<string | null>(null);
+  /** True once the register file has been read (or found absent): autosave runs only then. */
   const [fileMode, setFileMode] = useState(false);
-  const [status, setStatus] = useState("this browser only");
+  const [status, setStatus] = useState("checking for the register file…");
+  /** Set when the server refused a write as stale. Autosave stops until it is resolved. */
+  const [conflict, setConflict] = useState<string | null>(null);
+
+  // The file's version this tab's copy is based on, and the text last written or
+  // read, so an unchanged register is not written again. Refs, because the save
+  // queue reads them after earlier saves finish, not when they were scheduled.
+  const server = useRef(false);
+  const etag = useRef<string | null>(null);
+  const lastText = useRef<string | null>(null);
+  const conflictRef = useRef<string | null>(null);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+
+  const markConflict = (why: string | null) => { conflictRef.current = why; setConflict(why); };
 
   /** Every mutation goes through here, so every change is labelled and revertible.
    *  `op` describes the action in a form the board can query later. */
@@ -45,39 +59,132 @@ export default function App() {
   useEffect(() => { save(store); }, [store]);
   const s = useMemo(() => stats(store), [store]);
 
+  /**
+   * Write this tab's register to the file, one save at a time.
+   *
+   * Saves are chained so each one sends the version the previous one produced. Two
+   * in flight at once would race, and the second would be refused as stale by the
+   * first. `overwrite` bases the write on whatever the file holds now, so it
+   * replaces it on purpose: the user chose that, in the face of a conflict.
+   */
+  const writeFile = (text: string, overwrite = false) => {
+    queue.current = queue.current.then(async () => {
+      if (conflictRef.current && !overwrite) return;
+      let base = etag.current;
+      if (overwrite) {
+        const now = await currentEtag();
+        if (now === undefined) { setStatus("⚠ could not reach the register file"); return; }
+        base = now;
+      }
+      const r = await saveToFile(text, base);
+      if (r.where === "file") {
+        etag.current = r.etag ?? null;
+        lastText.current = text;
+        if (overwrite) { markConflict(null); setFileMode(true); }
+        setStatus(r.message);
+      } else if (r.where === "stale") {
+        markConflict(r.message);
+        setStatus(`⚠ ${r.message}`);
+      } else {
+        setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message);
+      }
+    });
+  };
+
+  /** Replace this tab's register with the file. The file is the source of truth, so
+   *  its history comes with it: this tab's copy is not on that history, which is why
+   *  the conflict banner offers to download it first. */
+  const reloadFromFile = async () => {
+    const got = await loadFromEndpoint();
+    if (!got) { setStatus(got === null ? "there is no register file yet" : "⚠ could not reach the register file"); return; }
+    const loaded = readStore(got.text);
+    if (!loaded) { setStatus("that is not a register this version can read"); return; }
+    etag.current = got.etag;
+    lastText.current = got.text;
+    setStore(loaded);
+    markConflict(null);
+    setFileMode(true);
+    setStatus("loaded from the register file");
+  };
+
+  // Startup: is there a server? Then read the file, and only then start writing.
+  // Switching autosave on before the read lets a fresh browser's seed data reach
+  // the file first.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const available = await fileEndpointAvailable();
       if (cancelled) return;
-      setFileMode(available);
+      server.current = available;
       if (!available) {
         setStatus("this browser only — no file endpoint, so nothing is written to disk");
         return;
       }
-      setStatus("writing to the register file");
-      const raw = await loadFromEndpoint();
-      if (cancelled || !raw) return;
+      const got = await loadFromEndpoint();
+      if (cancelled) return;
+      if (got === undefined) {
+        setStatus("⚠ could not read the register file, so nothing is written to it");
+        return;
+      }
+      if (got === null) {                       // no file yet: this browser establishes it
+        etag.current = null;
+        setFileMode(true);
+        setStatus("writing to a new register file");
+        return;
+      }
+      etag.current = got.etag;
+      const fromFile = readStore(got.text);
+      if (!fromFile) {
+        // Never autosave over a file this version cannot read. Saving from History
+        // replaces it deliberately, and the server keeps the old one beside it.
+        setStatus("⚠ the register file is not one this version can read, so nothing is written to it");
+        return;
+      }
       // An empty register is never adopted: fresh state always carries the seed,
-      // so an empty file can only be an accident.
-      const fromFile = readStore(raw);
-      if (!fromFile || fromFile.tickets.length === 0) return;
-      setStore((cur) =>
-        cur.history.length === 0 && cur.decisions.length === 0 ? fromFile : cur,
-      );
-      setStatus("loaded from the register file");
+      // so an empty file can only be an accident. This browser's register replaces it.
+      if (fromFile.tickets.length > 0) {
+        lastText.current = got.text;
+        setStore(fromFile);
+        setStatus("loaded from the register file");
+      } else {
+        setStatus("the register file was empty; writing this browser's register to it");
+      }
+      setFileMode(true);
     })();
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (!fileMode) return;
-    const t = window.setTimeout(() => {
-      void saveToFile(serialize(store)).then((r) =>
-        setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
-    }, 600);
+    if (!fileMode || conflict) return;
+    const text = serialize(store);
+    if (text === lastText.current) return;
+    const t = window.setTimeout(() => writeFile(text), 600);
     return () => window.clearTimeout(t);
-  }, [store, fileMode]);
+    // writeFile only reads refs and setters, so it is safe to leave out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, fileMode, conflict]);
+
+  /** History's "Save to file". In a conflict, or over a file this version cannot
+   *  read, it overwrites — but only once the user says so. */
+  const saveNow = () => {
+    const text = serialize(store);
+    if (!server.current) {
+      void saveToFile(text).then((r) => setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
+      return;
+    }
+    if (conflict || !fileMode) {
+      if (!window.confirm(
+        "Replace the register file with this tab's copy? Whatever the file holds now is lost, " +
+        "unless it was in an older format, which is kept beside it.",
+      )) return;
+      writeFile(text, true);
+      return;
+    }
+    writeFile(text);
+  };
+
+  const downloadCopy = () =>
+    download(`register-${stamp()}.json`, serialize(store), "application/json");
 
   const decide = (ticketId: number, action: DecisionAction, reason: string, revisit: string | null) =>
     act(`${action.toLowerCase()} ${ticketId}`, (cur) => recordDecision(cur, ticketId, action, reason, revisit));
@@ -92,11 +199,12 @@ export default function App() {
   };
 
   const loadFromFile = async () => {
-    const raw = (await loadFromEndpoint()) ?? (await loadFromPicker());
+    if (server.current) { await reloadFromFile(); return; }
+    const raw = await loadFromPicker();
     if (!raw) { setStatus("no file loaded"); return; }
     const loaded = readStore(raw);
     if (!loaded) { setStatus("that is not a register this version can read"); return; }
-    act("load from file", () => loaded);
+    setStore(loaded);
     setStatus("loaded from file");
   };
 
@@ -115,6 +223,18 @@ export default function App() {
         </div>
         <button className="pick" onClick={() => setCreating(true)}>+ New ticket</button>
       </header>
+
+      {conflict && (
+        <div className="conflict" role="alert">
+          <b>Another tab or machine changed the register file.</b>{" "}
+          This tab has stopped saving to it, so nothing is overwritten. Download this tab's copy
+          first if it has changes you want to keep.
+          <span className="conflict-actions">
+            <button onClick={downloadCopy}>Download my copy</button>
+            <button className="pick" onClick={() => { void reloadFromFile(); }}>Reload from file</button>
+          </span>
+        </div>
+      )}
 
       <main>
         {tab === "triage" && <Triage store={store} onDecide={decide} onUndo={() => act("undo decision", undoLast)} />}
@@ -150,10 +270,7 @@ export default function App() {
           <History
             store={store}
             onRevert={(i) => act("revert", (cur) => revertTo(cur, i))}
-            onSaveFile={() => {
-              void saveToFile(serialize(store)).then((r) =>
-                setStatus(r.where === "refused" ? `⚠ ${r.message}` : r.message));
-            }}
+            onSaveFile={saveNow}
             onLoadFile={loadFromFile}
             onDownload={() => download("register.json", serialize(store), "application/json")}
             onReset={reset}

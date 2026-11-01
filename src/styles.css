@@ -35,6 +35,19 @@ header.top > button.pick {
 }
 header.top > button.dim { background: transparent; border: 1px solid var(--line); color: var(--dim); padding: 6px 10px; border-radius: 8px; }
 .spacer { flex: 1; }
+
+/* Shown when the server refused a write as stale: this tab has stopped saving. */
+.conflict {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 12px 20px 0; padding: 10px 14px; border-radius: 8px;
+  border: 1px solid var(--warn); background: var(--panel2); color: var(--ink);
+}
+.conflict-actions { display: flex; gap: 8px; margin-left: auto; }
+.conflict button {
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  padding: 6px 12px; border-radius: 8px;
+}
+.conflict button.pick { border-color: var(--accent); }
 .dim { color: var(--dim); }
 .small { font-size: 12px; }
 

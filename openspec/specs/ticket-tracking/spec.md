@@ -8,7 +8,9 @@ about them week by week.
 The unit is the ask, not the project: work is captured, ranked, triaged, assigned to
 releases, audited and reported from one register. It runs in a browser with no
 backend and keeps its state in a local JSON file.
+
 ## Requirements
+
 ### Requirement: Field discipline
 
 The ticket model SHALL store only fields that belong to one of the three tiers.
@@ -192,11 +194,13 @@ The system SHALL derive flags from stored data without manual entry.
 Ticket data SHALL be stored on the user's machine and SHALL NOT require a
 database or a network service. When a development or preview server is present,
 the register SHALL additionally be written to a JSON file on the user's machine
-outside version control, so that no real ask is ever committed. That file SHALL
-NOT be the only way to recover an earlier state: the application SHALL keep its
-own snapshots of the register and SHALL revert from them. When no such server is
-present, the application SHALL offer a file-based alternative and a download. A
-save produced by an incompatible earlier model SHALL NOT be loaded partially.
+outside version control, so that no real ask is ever committed. While the server
+is present, that file SHALL be the source of truth: browser storage SHALL be a
+cache of it. That file SHALL NOT be the only way to recover an earlier state:
+the application SHALL keep its own snapshots of the register and SHALL revert
+from them. When no such server is present, the application SHALL offer a
+file-based alternative and a download. A save produced by an incompatible
+earlier model SHALL NOT be loaded partially.
 
 #### Scenario: Both layers
 
@@ -215,9 +219,22 @@ save produced by an incompatible earlier model SHALL NOT be loaded partially.
 
 #### Scenario: Adopting a newer file
 
-- WHEN the browser holds no state of its own and a register file exists
-- THEN the file is loaded
-- AND a browser that already holds state is not overwritten by the file
+- WHEN the application starts with a server present and a register file exists
+- THEN the file is loaded, whatever browser storage holds
+- AND nothing is written to the file until that load has finished
+
+#### Scenario: Establishing the file
+
+- WHEN the application starts with a server present and no register file exists
+- THEN the browser's register is written to establish it
+
+#### Scenario: A file this version cannot read
+
+- WHEN the application starts with a server present and the register file is not
+  one this version can read
+- THEN nothing is written to the file automatically
+- AND the application says so, and replaces the file only when the user saves to
+  it deliberately
 
 ### Requirement: Updating people without a backend
 
@@ -702,6 +719,19 @@ reads the body. It SHALL serve only its own path.
   network, and saves
 - THEN the write is accepted
 
+### Requirement: A format change keeps the old file
+
+When a write changes the register's stored format version, the file endpoint
+SHALL first keep the file it replaces beside the register, under a name that
+records its format and when it was replaced, and SHALL NOT modify that copy
+afterwards.
+
+#### Scenario: A format change keeps the old file
+
+- WHEN a write replaces a register file stored in a different format version
+- THEN the replaced file is kept, unchanged, beside the register
+- AND a write that keeps the format version keeps no copy
+
 ### Requirement: Every load path reads the same way
 
 Browser storage, the file endpoint, and a file the user picks SHALL all be read by
@@ -739,3 +769,44 @@ as scope after freeze.
 - WHEN a date is computed a number of days ahead across a daylight-saving change
 - THEN it lands on the same calendar date as it would without the change
 
+### Requirement: Stale writes are refused
+
+Every write to the register file SHALL identify the version of the file it was
+based on. The server SHALL refuse a write based on a version that is no longer
+current. After a refused write the application SHALL stop writing to the file,
+SHALL say that another tab or machine changed the register, and SHALL offer to
+reload the file or to download its own copy first.
+
+#### Scenario: Two tabs
+
+- WHEN a change is saved from one tab, and then a change is made in a second
+  tab that loaded the file earlier
+- THEN the second tab's write is refused and the file keeps the first tab's
+  change
+- AND the second tab says why, and offers to reload or to download its copy
+
+#### Scenario: Nothing is lost by a refusal
+
+- WHEN a write is refused and the user downloads this tab's copy
+- THEN the download holds every change made in this tab
+
+#### Scenario: An ordinary save
+
+- WHEN only one tab is open and changes are made
+- THEN every write is accepted
+
+#### Scenario: A write that does not say what it was based on
+
+- WHEN a write that names no version arrives and a register file already exists
+- THEN it is refused and the file is unchanged
+
+#### Scenario: A hand edit
+
+- WHEN the register file is edited outside the application after a tab loaded it
+- THEN that tab's next write is refused
+
+#### Scenario: Reloading after a refusal
+
+- WHEN the user reloads the file after a refused write
+- THEN the tab shows the file's register, including its history, and saving
+  resumes

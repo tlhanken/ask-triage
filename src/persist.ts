@@ -14,8 +14,18 @@
 const ENDPOINT = "/__data";
 
 export interface SaveResult {
-  where: "file" | "browser" | "none" | "refused";
+  /** "stale" means another tab or machine changed the file since this copy was
+   *  based on it; "refused" is any other refusal (an empty write, say). */
+  where: "file" | "browser" | "none" | "refused" | "stale";
   message: string;
+  /** The file's new version after a successful write to the endpoint. */
+  etag?: string;
+}
+
+/** The register file as served, with the version a later save must send back. */
+export interface Loaded {
+  text: string;
+  etag: string | null;
 }
 
 /** Minimal shapes for the File System Access API, which not every lib.dom
@@ -43,42 +53,74 @@ export async function fileEndpointAvailable(): Promise<boolean> {
   }
 }
 
-export async function loadFromEndpoint(): Promise<string | null> {
+/**
+ * Read the register file from the server, with its version.
+ * `undefined` when the server could not be reached; null when there is no file.
+ */
+export async function loadFromEndpoint(): Promise<Loaded | null | undefined> {
   try {
     const r = await fetch(ENDPOINT);
-    if (!r.ok) return null;
-    return await r.text();
+    if (r.status === 204) return null;
+    if (!r.ok) return undefined;
+    return { text: await r.text(), etag: r.headers.get("etag") };
   } catch {
-    return null;
+    return undefined;
   }
 }
 
-/** Save to disk: server endpoint first, then the file picker. */
-export async function saveToFile(json: string): Promise<SaveResult> {
+/** The file's current version, without its body. null when there is no file. */
+export async function currentEtag(): Promise<string | null | undefined> {
+  try {
+    const r = await fetch(ENDPOINT, { method: "HEAD" });
+    if (r.status === 204) return null;
+    return r.ok ? r.headers.get("etag") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Save to disk: server endpoint first, then the file picker.
+ *
+ * `etag` is the version of the file this copy was based on. The server refuses the
+ * write if the file has changed since; null means "there was no file", which only
+ * establishes one.
+ */
+export async function saveToFile(json: string, etag: string | null = null): Promise<SaveResult> {
   try {
     const r = await fetch(ENDPOINT, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(etag ? { "if-match": etag } : {}) },
       body: json,
     });
     if (r.ok) {
       // The server says where it wrote: the path is configurable (ASK_TRIAGE_DATA_FILE).
       let file = "the register file";
-      try { file = ((await r.json()) as { file?: string }).file ?? file; } catch { /* keep the generic name */ }
-      return { where: "file", message: `saved to ${file}` };
+      let next: string | undefined = r.headers.get("etag") ?? undefined;
+      let backup: string | undefined;
+      try {
+        const body = (await r.json()) as { file?: string; etag?: string; backup?: string };
+        file = body.file ?? file;
+        next = body.etag ?? next;
+        backup = body.backup;
+      } catch { /* keep the generic name */ }
+      const kept = backup ? `; the previous format was kept at ${backup}` : "";
+      return { where: "file", message: `saved to ${file}${kept}`, etag: next };
     }
 
     // The endpoint answered and said no. Do NOT fall through to the picker: the
     // server is there, the write was rejected, and pretending otherwise is how a
     // refusal turns into a silent loss.
     let why = `not saved (HTTP ${r.status})`;
+    let stale = false;
     try {
-      const body = (await r.json()) as { reason?: string };
+      const body = (await r.json()) as { reason?: string; stale?: boolean };
       if (body?.reason) why = body.reason;
+      stale = body?.stale === true;
     } catch {
       /* keep the status code */
     }
-    return { where: "refused", message: why };
+    return { where: stale ? "stale" : "refused", message: why };
   } catch {
     /* no server — try the picker */
   }
