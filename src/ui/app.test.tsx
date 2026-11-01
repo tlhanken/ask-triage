@@ -2,9 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
-import { DEFAULT_PROJECTS, derive, revisitInWeeks } from "./schema";
-import { type Store, fillOutQueue, freshStore, load, moveTicketToSprint, serialize } from "./store";
-import { STORAGE_KEY, readyStore } from "./test-fixtures";
+import { derive } from "../domain/assess";
+import { revisitInWeeks } from "../domain/dates";
+import { DEFAULT_PROJECTS } from "../domain/schema";
+import { fillOutQueue } from "../domain/pipeline";
+import { freshStore, load, moveTicketToSprint, serialize, type Store } from "../domain/store";
+import { readyStore, STORAGE_KEY } from "../domain/test-fixtures";
 
 // Freeze the date so the seed, the release dates and "today" never drift apart.
 // Only Date is faked; timers stay real so React and the autosave debounce run.

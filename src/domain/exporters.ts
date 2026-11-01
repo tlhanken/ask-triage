@@ -1,5 +1,8 @@
-import { type DerivedTicket, type ProjectId, currentRelease, derive, externalLabel, iso, isOpen } from "./schema";
-import type { Decision, Store } from "./store";
+import { derive, type DerivedTicket } from "./assess";
+import { iso } from "./dates";
+import { currentRelease } from "./releases";
+import { externalLabel, isOpen, type ProjectId } from "./schema";
+import { type Decision, type Store } from "./store";
 
 /** Export paths: a markdown summary for updating people, plus CSV/JSON. */
 
@@ -89,27 +92,6 @@ export function toJson(s: Store, now = new Date()): string {
     null,
     2,
   );
-}
-
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function download(filename: string, text: string, mime = "text/plain"): void {
-  const blob = new Blob([text], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 /** The local day, for filenames — an evening export is dated today, not tomorrow. */

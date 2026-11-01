@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import {
-  type Ticket, estimateLabel, isOpen, label, matchProjects, priorityLabel, riskAlerts,
-} from "./schema";
-import { type Store, projectTickets, projectUsage } from "./store";
+import { riskAlerts } from "../domain/assess";
+import { estimateLabel, isOpen, label, matchProjects, priorityLabel, type Ticket } from "../domain/schema";
+import { projectTickets, projectUsage, type Store } from "../domain/store";
 import { DueField } from "./fields";
 
 /**

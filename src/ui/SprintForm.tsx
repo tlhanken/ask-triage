@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Sprint } from "./schema";
+import { type Sprint } from "../domain/schema";
 
 /** Release settings: when it freezes and when it ships. */
 

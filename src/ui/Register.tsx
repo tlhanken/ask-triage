@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import {
-  type DerivedTicket, type Ticket, CATEGORIES, derive, externalLabel, PRIORITIES, STATES, priorityLabel, priorityRank,
-} from "./schema";
-import type { Store } from "./store";
+import { derive, type DerivedTicket } from "../domain/assess";
+import { CATEGORIES, externalLabel, PRIORITIES, priorityLabel, priorityRank, STATES, type Ticket } from "../domain/schema";
+import { type Store } from "../domain/store";
 
 type SortKey =
   | "score" | "id" | "name" | "state" | "priority" | "type" | "ageDays" | "daysToDue" | "sprint";
@@ -22,7 +21,7 @@ export default function Register({ store, onEdit }: { store: Store; onEdit: (t: 
       .filter((t) => (!priorityFilter ? true : priorityFilter === "__none__" ? t.priority === null : t.priority === priorityFilter))
       .filter((t) => {
         if (!categoryFilter) return true;
-        // "unset" is a real answer here — those are the ones the audit is asking about
+        // "unset" is a real answer here — those are the ones Fill out is asking about
         return categoryFilter === "__none__" ? t.type === null : t.type === categoryFilter;
       })
       .filter((t) =>

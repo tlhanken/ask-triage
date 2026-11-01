@@ -5,9 +5,9 @@
  * it is ready to schedule. Tests about scheduling start from readyStore() instead.
  */
 import { type Ticket } from "./schema";
-import { type Store, freshStore } from "./store";
+import { freshStore, type Store } from "./store";
 
-/** The browser storage key the app reads on startup (see store.ts). */
+/** The browser storage key the app reads on startup (see domain/store.ts). */
 export const STORAGE_KEY = "revel-priority-tracker-v1";
 
 /** One ticket with sensible values, overridden by `over`. */

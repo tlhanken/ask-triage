@@ -1,4 +1,5 @@
-import { type Ticket, addDays, iso } from "./schema";
+import { addDays, iso } from "./dates";
+import { type Ticket } from "./schema";
 
 /** Seed tickets: a realistic mix so the plan is worth running in ~2 minutes.
  *  Replace with your real rows once the workflow feels right.

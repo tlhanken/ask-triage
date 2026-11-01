@@ -1,6 +1,6 @@
-import type { Store } from "./store";
-import { HISTORY_CAP } from "./store";
-import { localStamp } from "./schema";
+import { type Store } from "../domain/store";
+import { HISTORY_CAP } from "../domain/history";
+import { localStamp } from "../domain/dates";
 
 /** Data & history: the version layer.
  *

@@ -55,7 +55,7 @@ The planning settings (release capacity, sprint length, scoring weights) are not
 in this file. They are stored inside the register itself, so they travel with
 your data. Releases and projects are edited in the app. Capacity, sprint length
 and weights have no editor yet; a new register takes them from
-`DEFAULT_SETTINGS` in `src/schema.ts`.
+`DEFAULT_SETTINGS` in `src/domain/schema.ts`.
 
 ## Commands
 
@@ -72,7 +72,7 @@ Two layers, deliberately:
 
     data/register.json    The durable record, written indented. Gitignored: the
                           repo never carries real asks, and a fresh clone starts
-                          from the seed in `src/seed.ts` instead. Its location
+                          from the seed in `src/domain/seed.ts` instead. Its location
                           is configurable (ASK_TRIAGE_DATA_FILE).
     localStorage          The instant layer, invisible to git, keyed
                           `revel-priority-tracker-v1`. Do NOT rename that key: it
@@ -140,7 +140,7 @@ current register, so the history stays small however many tickets there are.
 ## Not done yet
 
 - Capacity, sprint length and scoring weights have no editor; they come from
-  `DEFAULT_SETTINGS` in `src/schema.ts` when a register is created.
+  `DEFAULT_SETTINGS` in `src/domain/schema.ts` when a register is created.
 - Capacity is one number per release. Type is required so that per-team capacity
   (Driver, Server, …) can be added without another migration.
 - A register larger than about 60KB is not flushed when a tab closes (browsers cap

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { type Category, type Priority, CATEGORIES, PRIORITIES, isEstimate } from "./schema";
+import { CATEGORIES, type Category, isEstimate, PRIORITIES, type Priority } from "../domain/schema";
 
 /**
  * The four fields that decide whether a ticket is ready to schedule, as controls

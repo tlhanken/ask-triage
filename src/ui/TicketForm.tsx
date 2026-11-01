@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type ProjectId, type Ticket, label, matchProjects } from "./schema";
+import { label, matchProjects, type ProjectId, type Ticket } from "../domain/schema";
 import { DueField, EstimateField, PriorityField, TypeField } from "./fields";
 
 /**

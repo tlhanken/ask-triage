@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
-import { etagOf } from "./server/localData";
-import { freshStore, serialize } from "./store";
+import { etagOf } from "../server/localData";
+import { freshStore, serialize } from "../domain/store";
 
 /**
  * A stand-in for the dev server's file endpoint, with the same rules: ETag on read,

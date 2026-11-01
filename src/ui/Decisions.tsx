@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
-import type { Store } from "./store";
-import { localStamp } from "./schema";
-import {
-  copyText, decisionsToMarkdown, download, projectsToMarkdown, registerToCsv, stamp, toJson,
-} from "./exporters";
+import { type Store } from "../domain/store";
+import { localStamp } from "../domain/dates";
+import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, stamp, toJson } from "../domain/exporters";
+import { copyText, download } from "./download";
 
 export default function DecisionLog({ store }: { store: Store }) {
   const [msg, setMsg] = useState<string | null>(null);

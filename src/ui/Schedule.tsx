@@ -1,11 +1,12 @@
 import { useState, type DragEvent, type ReactNode } from "react";
-import {
-  type Ticket, beingWorkedOn, daysSince, daysToRelease, derive, estimateLabel, fillState, findSprint,
-  hasShipped, isFrozen, isOpen, isReady, priorityLabel, spanOf, startsTooLate,
-} from "./schema";
-import {
-  type Move, type OptimizeResult, type Store, explainPlan, optimizePlan, scheduleQueue, slippedIn, spanLabel,
-} from "./store";
+import { derive, isReady } from "../domain/assess";
+import { daysSince } from "../domain/dates";
+import { beingWorkedOn, daysToRelease, fillState, findSprint, hasShipped, isFrozen, spanOf, startsTooLate } from "../domain/releases";
+import { estimateLabel, isOpen, priorityLabel, type Ticket } from "../domain/schema";
+import { slippedIn } from "../domain/history";
+import { explainPlan, type Move, optimizePlan, type OptimizeResult } from "../domain/optimize";
+import { scheduleQueue, spanLabel } from "../domain/pipeline";
+import { type Store } from "../domain/store";
 
 /** Schedule: ready work on the left, then the releases in the owner's display order.
  *  A card sits where its ticket ships; earlier releases it spans show a slim row.

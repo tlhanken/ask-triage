@@ -1,21 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import {
-  type Sprint, type Ticket, BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_SETTINGS, OPTIONAL_FIELDS, addDays,
-  beingWorkedOn, computeFlags, currentRelease, defaultSprints, derive, externalLabel, fillState, findSprint,
-  hasShipped, iso, isFrozen, isReady, loadUnits, localStamp, matchProjects, missingRequired, nudges,
-  PROJECT_SUGGESTION_CAP, DEFAULT_PROJECTS, parseDate, queueHealth, releaseOrder, riskAlerts, shipsLate, spanOf,
-  startsTooLate, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue, scoreTicket,
-} from "./schema";
-import {
-  type Store, HISTORY_CAP, STORE_VERSION, addProject, addSprint, applyCloseOut, applyPlan, blankTicket,
-  checkReport, closeOutQueue, compareSprints, createTicket, defaultRevisit, deleteTicket, explainPlan, editTicket,
-  fillOutQueue, fillReleaseDates, freshStore, moveTicketToSprint, nextRelease, optimizePlan, pipeline,
-  projectTickets, projectUsage, planRevert, renameProject, recordDecision, readStore, removeProject, removeSprint, revertTo, resetToSeed,
-  lastSetAside, revisitDue, scheduleQueue, serialize, shiftSprint, slippedIn, updateSprint, updateTicket,
-  withHistory,
-} from "./store";
+import { computeFlags, derive, isReady, missingRequired, nudges, queueHealth, riskAlerts, scoreTicket } from "./assess";
+import { addDays, iso, localStamp, parseDate, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks, revisitIsDue } from "./dates";
+import { beingWorkedOn, currentRelease, defaultSprints, fillState, findSprint, hasShipped, isFrozen, loadUnits, releaseOrder, shipsLate, spanOf, startsTooLate, compareSprints } from "./releases";
+import { BACKGROUND_FIELDS, CORE_FIELDS, DEFAULT_PROJECTS, DEFAULT_SETTINGS, externalLabel, matchProjects, OPTIONAL_FIELDS, PROJECT_SUGGESTION_CAP, type Sprint, type Ticket, type Settings } from "./schema";
+import { applyCloseOut, defaultRevisit, editTicket, lastSetAside, nextRelease, recordDecision, revisitDue } from "./decisions";
+import { HISTORY_CAP, planRevert, revertTo, slippedIn, withHistory } from "./history";
+import { applyPlan, explainPlan, fillReleaseDates, optimizePlan } from "./optimize";
+import { checkReport, closeOutQueue, fillOutQueue, pipeline, scheduleQueue } from "./pipeline";
+import { addProject, addSprint, blankTicket, createTicket, deleteTicket, freshStore, moveTicketToSprint, projectTickets, projectUsage, readStore, removeProject, removeSprint, renameProject, resetToSeed, serialize, shiftSprint, type Store, STORE_VERSION, updateSprint, updateTicket } from "./store";
 import { mk, readyStore } from "./test-fixtures";
-import { type Settings } from "./schema";
 
 const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);
 import { decisionsToMarkdown, projectsToMarkdown, registerToCsv, stamp, toJson } from "./exporters";

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { ignoreShortcut } from "./keys";
-import {
-  type DecisionAction, type Ticket, REQUIRED_WHY, REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, derive, estimateLabel,
-  externalLabel, findSprint, label, missingRequired, nudges, priorityLabel, revisitInWeeks, riskAlerts,
-} from "./schema";
-import {
-  type CloseOutChoice, type FillOutItem, type Move, type Store, checkReport, closeOutQueue, defaultRevisit,
-  fillOutQueue, pipeline, scheduleQueue,
-} from "./store";
+import { derive, missingRequired, nudges, REQUIRED_WHY, riskAlerts } from "../domain/assess";
+import { REVISIT_WEEK_CHOICES, REVISIT_WEEKDAY, revisitInWeeks } from "../domain/dates";
+import { findSprint } from "../domain/releases";
+import { type DecisionAction, estimateLabel, externalLabel, label, priorityLabel, type Ticket } from "../domain/schema";
+import { type CloseOutChoice, defaultRevisit } from "../domain/decisions";
+import { type Move } from "../domain/optimize";
+import { checkReport, closeOutQueue, type FillOutItem, fillOutQueue, pipeline, scheduleQueue } from "../domain/pipeline";
+import { type Store } from "../domain/store";
 import { DueField, EstimateField, PriorityField, TypeField } from "./fields";
 import Schedule from "./Schedule";
 
