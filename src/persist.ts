@@ -143,6 +143,27 @@ export async function saveToFile(json: string, etag: string | null = null): Prom
   return { where: "browser", message: "kept in this browser only" };
 }
 
+/**
+ * Send a last save as the page goes away. `keepalive` lets the request outlive the
+ * page and, unlike sendBeacon, still carries If-Match, so a stale tab is refused
+ * here too. Nobody is left to read the answer; a refusal leaves the file as it was.
+ * Browsers cap keepalive bodies (64KB in Chromium); a larger register is skipped
+ * and the change stays in browser storage.
+ */
+export function saveOnExit(json: string, etag: string | null): void {
+  if (json.length > 60_000) return;
+  try {
+    void fetch(ENDPOINT, {
+      method: "POST",
+      keepalive: true,
+      headers: { "content-type": "application/json", ...(etag ? { "if-match": etag } : {}) },
+      body: json,
+    }).catch(() => { /* the page is gone; nothing to tell */ });
+  } catch {
+    /* no fetch, or the browser refused: browser storage still has the change */
+  }
+}
+
 export async function loadFromPicker(): Promise<string | null> {
   const open = picker().showOpenFilePicker;
   if (!open) return null;

@@ -192,3 +192,42 @@ describe("a stale write is refused", () => {
     await waitFor(() => expect(server.file).toContain('"After reload"'), { timeout: 3000 });
   });
 });
+
+describe("closing the tab", () => {
+  it("sends an unsaved change on pagehide, with keepalive and the version it was based on", async () => {
+    server.file = fileWith("Shared");
+    const sent: RequestInit[] = [];
+    const real = server.fetch;
+    vi.stubGlobal("fetch", (url: string, init: RequestInit = {}) => {
+      if (init.keepalive) sent.push(init);
+      return real(url, init);
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Register$/ }));
+    await waitFor(() => expect(screen.getByText("Shared")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "+ New ticket" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "Last second" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+    window.dispatchEvent(new Event("pagehide"));                 // before the 600ms autosave
+
+    expect(sent).toHaveLength(1);
+    expect((sent[0].headers as Record<string, string>)["if-match"]).toBe(etagOf(fileWith("Shared")));
+    await waitFor(() => expect(server.file).toContain('"Last second"'));
+  });
+
+  it("sends nothing when everything is already saved", async () => {
+    server.file = fileWith("Shared");
+    const sent: RequestInit[] = [];
+    const real = server.fetch;
+    vi.stubGlobal("fetch", (url: string, init: RequestInit = {}) => {
+      if (init.keepalive) sent.push(init);
+      return real(url, init);
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Register$/ }));
+    await waitFor(() => expect(screen.getByText("Shared")).toBeTruthy());
+    window.dispatchEvent(new Event("pagehide"));
+    expect(sent).toHaveLength(0);
+  });
+});

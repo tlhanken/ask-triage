@@ -7,7 +7,7 @@ import {
   serialize, shiftSprint, updateSprint, withHistory,
 } from "./store";
 import {
-  currentEtag, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveToFile,
+  currentEtag, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveOnExit, saveToFile,
 } from "./persist";
 import { download, stamp } from "./exporters";
 import Plan, { type Step } from "./Plan";
@@ -160,6 +160,18 @@ export default function App() {
     return () => window.clearTimeout(t);
     // writeFile only reads refs and setters, so it is safe to leave out.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, fileMode, conflict]);
+
+  // A change made in the last moments before the tab closes would otherwise wait
+  // for a debounce that never fires. On pagehide, send it with keepalive instead.
+  useEffect(() => {
+    if (!fileMode || conflict) return;
+    const onHide = () => {
+      const text = serialize(store);
+      if (text !== lastText.current) saveOnExit(text, etag.current);
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
   }, [store, fileMode, conflict]);
 
   /** History's "Save to file". In a conflict, or over a file this version cannot

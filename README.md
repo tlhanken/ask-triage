@@ -143,8 +143,9 @@ current register, so the history stays small however many tickets there are.
   `DEFAULT_SETTINGS` in `src/schema.ts` when a register is created.
 - Capacity is one number per release. Type is required so that per-team capacity
   (Driver, Server, …) can be added without another migration.
-- A change made in the last 600ms before a tab closes reaches browser storage but
-  not the register file. The next startup reads the file, so that change is lost.
+- A register larger than about 60KB is not flushed when a tab closes (browsers cap
+  `keepalive` requests), so a change made in its last 600ms stays in browser
+  storage only.
 
 
 ## License
