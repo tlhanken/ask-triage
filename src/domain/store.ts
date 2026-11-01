@@ -62,14 +62,6 @@ export interface Store {
   history: Snapshot[];
 }
 
-/**
- * The browser storage key. DO NOT RENAME it with the product.
- *
- * It identifies every existing save. Changing it makes load() find nothing, seed
- * a fresh register, and silently orphan whatever the user had — a rename is a
- * cosmetic change and this would be a data-loss event wearing one.
- */
-const KEY = "revel-priority-tracker-v1";
 
 export const clone = (t: Ticket): Ticket => ({
   ...t,
@@ -187,22 +179,6 @@ export function readStore(raw: string): Store | null {
   }
 }
 
-export function load(): Store {
-  try {
-    const raw = localStorage.getItem(KEY);
-    return (raw && readStore(raw)) || freshStore();
-  } catch {
-    return freshStore();
-  }
-}
-
-export function save(s: Store): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(s));
-  } catch {
-    /* private mode / quota — state stays in memory */
-  }
-}
 
 /**
  * The register as it is written to disk: indented, with a trailing newline.

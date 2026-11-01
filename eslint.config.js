@@ -23,4 +23,23 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    // The layer rule (see ARCHITECTURE.md): domain logic is pure. It never reaches
+    // React, the screens, browser I/O or the server, so it can be tested and changed
+    // without any of them.
+    files: ["src/domain/**/*.ts"],
+    rules: {
+      "no-restricted-imports": ["error", {
+        patterns: [
+          { group: ["react", "react-dom", "react-dom/*"], message: "src/domain is pure logic: no React." },
+          { group: ["../ui", "../ui/*", "../server", "../server/*"], message: "src/domain must not import the UI or the server." },
+        ],
+      }],
+      "no-restricted-globals": ["error",
+        { name: "document", message: "src/domain is pure logic: no DOM." },
+        { name: "localStorage", message: "Browser storage belongs in src/ui/persist.ts." },
+        { name: "fetch", message: "Network I/O belongs in src/ui/persist.ts." },
+      ],
+    },
+  },
 );

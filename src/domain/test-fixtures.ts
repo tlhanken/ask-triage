@@ -4,11 +4,10 @@
  * The seed starts with every estimate unset (nobody has chosen one), so nothing in
  * it is ready to schedule. Tests about scheduling start from readyStore() instead.
  */
-import { type Ticket } from "./schema";
+import { afterAll, beforeAll, vi } from "vitest";
+import { type Settings, type Ticket } from "./schema";
 import { freshStore, type Store } from "./store";
 
-/** The browser storage key the app reads on startup (see domain/store.ts). */
-export const STORAGE_KEY = "revel-priority-tracker-v1";
 
 /** One ticket with sensible values, overridden by `over`. */
 export const mk = (over: Partial<Ticket>): Ticket => ({
@@ -30,3 +29,30 @@ export const readyStore = (estimate = 1): Store => {
     })),
   };
 };
+
+/**
+ * The fixed "now" for domain tests: 2026-10-18 12:00 UTC. The spreadsheet numbers
+ * in assess.test.ts were computed for this day.
+ */
+export const NOW = new Date("2026-10-18T12:00:00Z");
+
+/**
+ * Freeze Date at NOW for the calling test file. Call it once, at the top level.
+ *
+ * Fixtures built from the clock (the seed, defaultSprints(), isoFromNow) would
+ * otherwise drift away from NOW day by day, and tests comparing the two start
+ * failing a few days after they were written. Only Date is faked; timers stay real.
+ */
+export function freezeClock(at: Date = NOW): void {
+  beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"], now: at }); });
+  afterAll(() => { vi.useRealTimers(); });
+}
+
+/** A local date N days from the (frozen) now, as yyyy-mm-dd. */
+export const isoFromNow = (days: number): string => {
+  const d = new Date(Date.now() + days * 86_400_000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** The release names in display order. */
+export const sprintNames = (s: Settings): string[] => s.sprints.map((x) => x.name);

@@ -5,9 +5,9 @@ import { applyCloseOut, type CloseOutChoice, editTicket, recordDecision } from "
 import { planRevert, revertTo, withHistory } from "../domain/history";
 import { applyPlan, fillReleaseDates, type Move } from "../domain/optimize";
 import { pipeline } from "../domain/pipeline";
-import { addProject, addSprint, blankTicket, createTicket, deleteTicket, load, moveTicketToSprint, readStore, removeProject, removeSprint, renameProject, resetToSeed, save, serialize, shiftSprint, type Snapshot, type Store, updateSprint } from "../domain/store";
+import { addProject, addSprint, blankTicket, createTicket, deleteTicket, moveTicketToSprint, readStore, removeProject, removeSprint, renameProject, resetToSeed, serialize, shiftSprint, type Snapshot, type Store, updateSprint } from "../domain/store";
 import {
-  currentEtag, fileEndpointAvailable, loadFromEndpoint, loadFromPicker, saveOnExit, saveToFile,
+  currentEtag, fileEndpointAvailable, load, save, loadFromEndpoint, loadFromPicker, saveOnExit, saveToFile,
 } from "./persist";
 import { stamp } from "../domain/exporters";
 import { download } from "./download";

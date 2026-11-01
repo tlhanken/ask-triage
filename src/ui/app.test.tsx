@@ -6,8 +6,9 @@ import { derive } from "../domain/assess";
 import { revisitInWeeks } from "../domain/dates";
 import { DEFAULT_PROJECTS } from "../domain/schema";
 import { fillOutQueue } from "../domain/pipeline";
-import { freshStore, load, moveTicketToSprint, serialize, type Store } from "../domain/store";
-import { readyStore, STORAGE_KEY } from "../domain/test-fixtures";
+import { freshStore, moveTicketToSprint, serialize, type Store } from "../domain/store";
+import { readyStore } from "../domain/test-fixtures";
+import { load, STORAGE_KEY } from "./persist";
 
 // Freeze the date so the seed, the release dates and "today" never drift apart.
 // Only Date is faked; timers stay real so React and the autosave debounce run.

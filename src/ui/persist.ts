@@ -11,7 +11,42 @@
  * No database. See openspec/changes for the reasoning.
  */
 
+import { type Store, freshStore, readStore } from "../domain/store";
+
 const ENDPOINT = "/__data";
+
+// ---------------------------------------------------------------- browser storage
+
+/**
+ * The browser storage key. DO NOT RENAME it with the product.
+ *
+ * It identifies every existing save. Changing it makes load() find nothing, seed
+ * a fresh register, and silently orphan whatever the user had — a rename is a
+ * cosmetic change and this would be a data-loss event wearing one.
+ */
+export const STORAGE_KEY = "revel-priority-tracker-v1";
+
+/** The register this browser last held, or a fresh one. Read through readStore,
+ *  like every other load path. */
+export function load(): Store {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return (raw && readStore(raw)) || freshStore();
+  } catch {
+    return freshStore();
+  }
+}
+
+export function save(s: Store): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    /* private mode / quota — state stays in memory */
+  }
+}
+
+// ---------------------------------------------------------------- the register file
+
 
 export interface SaveResult {
   /** "stale" means another tab or machine changed the file since this copy was
