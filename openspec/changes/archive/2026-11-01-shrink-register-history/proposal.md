@@ -18,11 +18,14 @@ instead of 25 records of what changed. The fix is to record the change.
 - The register stays a single file. History gets smaller; the number of files does
   not change, so a register is still exported, downloaded and re-imported as a
   unit.
-- The retained history keeps one full baseline so that reverting past the oldest
-  recorded change still works, and so a corrupt record degrades to a failed revert
-  rather than a partial one.
-- Existing registers that hold full-copy history are converted on load, on every
-  load path, without inventing data.
+- No full copy is kept anywhere in the history. A revert starts from the
+  current register and steps back, so the current register is the only
+  starting point it needs. A damaged record fails the revert rather than
+  applying part of it.
+- Registers in the full-copy format are not converted: the app is not in use
+  yet, so a conversion would be code with nothing to convert. They are refused
+  whole by the existing safeguard, and the server keeps the replaced file when
+  a save changes the format (`file-is-source-of-truth`).
 - Revert, the "a revert is itself recorded" rule, the history cap, the decision
   log, and the UI are unchanged.
 
@@ -41,7 +44,8 @@ None.
 ## Impact
 
 - `src/store.ts` — `capture`, `pushHistory`, `revertTo`, `HISTORY_CAP`, `serialize`
-- `src/App.tsx` — both load paths, which must run the conversion
+- `src/App.tsx` — revert wiring, which now reports a revert that fails
 - `src/app.test.tsx`, `src/schema.test.ts` — history and revert coverage
 - `README.md` — the "Not done yet" entry this closes
-- `data/register.json` — the existing 195KB file, converted on first load
+- `data/register.json` — a file in the old format is refused, and kept by the
+  server when the first save in the new format replaces it

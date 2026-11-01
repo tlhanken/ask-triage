@@ -38,12 +38,16 @@ recorded so that it can be undone. History SHALL NOT rewrite the decision log.
 - AND the size of the history is governed by the changes recorded, not by the
   number of tickets in the register
 
-#### Scenario: Reverting past the oldest retained change
+#### Scenario: Reverting to the oldest retained change
 
-- WHEN a state older than the oldest recorded change is asked for
-- THEN the oldest retained state is restored
-- AND the revert is reported as reaching the end of the history rather than
-  silently restoring a different state
+- WHEN the oldest entry the history still holds is reverted to
+- THEN the state from before that change is restored
+- AND the revert is reported as reaching the oldest state the history holds
+
+#### Scenario: A damaged entry
+
+- WHEN a revert would pass through a history entry that cannot be read
+- THEN nothing is reverted and the application says why
 
 ## ADDED Requirements
 

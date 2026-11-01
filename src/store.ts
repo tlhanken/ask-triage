@@ -45,19 +45,38 @@ export interface Decision {
   prev: Ticket;               // snapshot for undo
 }
 
-/** One recorded state, taken immediately BEFORE the labelled action ran. */
+/**
+ * One recorded change: what is needed to undo it, and nothing more.
+ *
+ * History is a chain leading back from the current register. Each entry holds the
+ * state, from immediately BEFORE the labelled action, of only what the action
+ * changed. So a revert starts from the register as it is now and steps back through
+ * the entries, newest first. The current register is the starting point, which is
+ * why no full copy is stored anywhere in the history.
+ */
 export interface Snapshot {
   at: string;
   label: string;
-  data: string;   // JSON of { tickets, settings }
+  /** Before-state of each ticket the change touched, keyed by id. null means the
+   *  ticket did not exist yet, so undoing the change removes it. Tickets the change
+   *  did not touch are left out: that omission is the whole saving. */
+  tickets: Record<string, Ticket | null>;
+  /** The ticket ids in order, before the change. Only present when the change
+   *  added, removed or reordered tickets, so a revert puts each one back in place. */
+  order?: number[];
+  /** Settings before the change, only when the change altered them. */
+  settings?: Settings;
   /** Structured form of the action, when it is one we can describe. Lets the
    *  board answer questions like "what was added after the freeze?" without
    *  storing anything on the ticket itself. */
   op?: { kind: "move"; ticketId: number; sprint: string | null };
 }
 
+/** The stored format. 4: history entries record changes, not full states. */
+export const STORE_VERSION = 4;
+
 export interface Store {
-  version: 3;
+  version: typeof STORE_VERSION;
   tickets: Ticket[];
   decisions: Decision[];
   settings: Settings;
@@ -84,7 +103,7 @@ const clone = (t: Ticket): Ticket => ({
 export function freshStore(): Store {
   const tickets = seedTickets();
   return {
-    version: 3,
+    version: STORE_VERSION,
     tickets,
     decisions: [],
     settings: {
@@ -119,7 +138,7 @@ function looksValid(s: unknown): s is Store {
   const v = s as Store;
   return (
     !!v &&
-    v.version === 3 &&
+    v.version === STORE_VERSION &&
     Array.isArray(v.tickets) &&
     v.tickets.every(
       (t) =>
@@ -378,22 +397,55 @@ export function shiftSprint(s: Store, name: string, delta: -1 | 1): Store {
 
 // ---------------------------------------------------------------- history
 
-/** Kept small on purpose: snapshots ride along inside the store, which is written
- *  to localStorage as well as to the file, and localStorage is not large. */
+/** Kept small on purpose: the history rides along inside the store, which is
+ *  written to localStorage as well as to the register file, and localStorage is
+ *  not large. Each entry is now the size of its change rather than of the whole
+ *  register, so the cap bounds the number of steps back, not a multiple of the
+ *  register's size. */
 export const HISTORY_CAP = 25;
 
-const capture = (s: Store): string => JSON.stringify({ tickets: s.tickets, settings: s.settings });
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
-/** Record the CURRENT state under a label, immediately before a change lands. */
-export function pushHistory(s: Store, label: string, now = new Date(), op?: Snapshot["op"]): Store {
-  const snapshot: Snapshot = { at: now.toISOString(), label, data: capture(s), ...(op ? { op } : {}) };
-  const history = [...s.history, snapshot];
-  while (history.length > HISTORY_CAP) history.shift();
-  return { ...s, history };
+/**
+ * Describe how to get from `after` back to `before`, as one history entry.
+ * null when nothing changed, so a no-op records nothing.
+ *
+ * Computed by comparing the two states rather than trusting each mutation to say
+ * what it touched: a mutation that forgets one ticket would otherwise record a
+ * change that cannot be undone.
+ */
+export function recordChange(
+  before: Store, after: Store, label: string, now = new Date(), op?: Snapshot["op"],
+): Snapshot | null {
+  const prev = new Map(before.tickets.map((t) => [t.id, t]));
+  const next = new Map(after.tickets.map((t) => [t.id, t]));
+  const tickets: Record<string, Ticket | null> = {};
+  for (const [id, t] of prev) if (!same(t, next.get(id))) tickets[id] = clone(t);
+  for (const id of next.keys()) if (!prev.has(id)) tickets[id] = null;
+
+  const beforeOrder = before.tickets.map((t) => t.id);
+  const orderChanged = !same(beforeOrder, after.tickets.map((t) => t.id));
+  const settingsChanged = !same(before.settings, after.settings);
+  if (Object.keys(tickets).length === 0 && !orderChanged && !settingsChanged) return null;
+
+  return {
+    at: now.toISOString(),
+    label,
+    tickets,
+    ...(orderChanged ? { order: beforeOrder } : {}),
+    ...(settingsChanged ? { settings: structuredClone(before.settings) } : {}),
+    ...(op ? { op } : {}),
+  };
 }
 
-/** Run a mutation, having first recorded what it is about to change. A mutation
- *  that changes nothing (returns its input) leaves no dead snapshot behind. */
+const appendHistory = (history: Snapshot[], entry: Snapshot): Snapshot[] => {
+  const next = [...history, entry];
+  while (next.length > HISTORY_CAP) next.shift();
+  return next;
+};
+
+/** Run a mutation and record what it changed, so it can be undone. A mutation
+ *  that changes nothing leaves no entry behind. */
 export function withHistory(
   s: Store,
   label: string,
@@ -401,9 +453,69 @@ export function withHistory(
   now = new Date(),
   op?: Snapshot["op"],
 ): Store {
-  const recorded = pushHistory(s, label, now, op);
-  const next = mutate(recorded);
-  return next === recorded ? s : next;
+  const next = mutate(s);
+  const entry = recordChange(s, next, label, now, op);
+  return entry ? { ...next, history: appendHistory(next.history, entry) } : s;
+}
+
+/** Is this a history entry this version can apply? Checked before a revert uses it,
+ *  so a damaged entry fails the revert instead of applying part of it. */
+function readableEntry(h: unknown): h is Snapshot {
+  const e = h as Snapshot;
+  if (!e || typeof e.label !== "string" || !e.tickets || typeof e.tickets !== "object") return false;
+  for (const [id, t] of Object.entries(e.tickets)) {
+    if (t !== null && (typeof t !== "object" || t.id !== Number(id) || !Array.isArray(t.projects))) return false;
+  }
+  if (e.order !== undefined && !(Array.isArray(e.order) && e.order.every((x) => typeof x === "number"))) return false;
+  if (e.settings !== undefined && !(e.settings && Array.isArray(e.settings.sprints))) return false;
+  return true;
+}
+
+export type RevertPlan =
+  | { ok: true; tickets: Ticket[]; settings: Settings; label: string; oldest: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * Work out the state from before the change at `index`, without applying it.
+ *
+ * Starts from the register as it is now and undoes each later change in turn,
+ * newest first. `oldest` says the target is the oldest state the history still
+ * holds, since anything older has been dropped by the cap.
+ */
+export function planRevert(s: Store, index: number): RevertPlan {
+  const target = s.history[index];
+  if (!target) return { ok: false, reason: "there is no such history entry" };
+
+  const byId = new Map(s.tickets.map((t) => [t.id, t]));
+  let order = s.tickets.map((t) => t.id);
+  let settings = s.settings;
+
+  for (let i = s.history.length - 1; i >= index; i--) {
+    const h = s.history[i];
+    if (!readableEntry(h)) {
+      return { ok: false, reason: `the history entry "${(h as { label?: string })?.label ?? i}" cannot be read, so nothing was reverted` };
+    }
+    for (const [key, t] of Object.entries(h.tickets)) {
+      const id = Number(key);
+      if (t === null) {
+        byId.delete(id);
+        order = order.filter((x) => x !== id);
+      } else {
+        byId.set(id, clone(t));
+        if (!order.includes(id)) order.push(id);
+      }
+    }
+    if (h.order) order = [...h.order.filter((id) => byId.has(id)), ...order.filter((id) => !h.order!.includes(id))];
+    if (h.settings) settings = structuredClone(h.settings);
+  }
+
+  return {
+    ok: true,
+    tickets: order.filter((id) => byId.has(id)).map((id) => byId.get(id)!),
+    settings,
+    label: target.label,
+    oldest: index === 0,
+  };
 }
 
 /**
@@ -430,13 +542,13 @@ export function slippedIn(s: Store, sprint: string, now = new Date()): Snapshot[
  * Restore tickets and settings as they were before the action at `index`.
  * The revert is itself recorded, so it can be undone. The decision log is an
  * append-only record of what was decided at the time and is not rewritten.
+ * A revert that cannot be computed changes nothing; planRevert says why.
  */
 export function revertTo(s: Store, index: number, now = new Date()): Store {
-  const snapshot = s.history[index];
-  if (!snapshot) return s;
-  const data = JSON.parse(snapshot.data) as { tickets: Ticket[]; settings: Settings };
-  const recorded = pushHistory(s, `revert to before "${snapshot.label}"`, now);
-  return { ...recorded, tickets: data.tickets, settings: data.settings };
+  const plan = planRevert(s, index);
+  if (!plan.ok) return s;
+  return withHistory(s, `revert to before "${plan.label}"`,
+    (cur) => ({ ...cur, tickets: plan.tickets, settings: plan.settings }), now);
 }
 
 // ---------------------------------------------------------------- auto-optimize

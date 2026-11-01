@@ -318,10 +318,11 @@ that has already shipped, and SHALL order dated work before undated work.
 
 ### Requirement: Version history and revert
 
-Every change SHALL record the state it is about to replace, under a human-readable
-label. The history SHALL be viewable and SHALL allow restoring the state from
-before any recorded change. A revert SHALL itself be recorded so that it can be
-undone. History SHALL NOT rewrite the decision log.
+Every change SHALL record what is needed to restore the state it is about to
+replace, under a human-readable label. Recording a change SHALL NOT store a
+further full copy of the register. The history SHALL be viewable and SHALL allow
+restoring the state from before any recorded change. A revert SHALL itself be
+recorded so that it can be undone. History SHALL NOT rewrite the decision log.
 
 #### Scenario: Recording
 
@@ -345,6 +346,24 @@ undone. History SHALL NOT rewrite the decision log.
 - WHEN a ticket is deleted and the deletion is reverted
 - THEN the ticket is restored
 - AND its id is not reused by any later ticket
+
+#### Scenario: History does not scale with the register
+
+- WHEN the history cap is reached
+- THEN the retained entries are not each a full copy of the register
+- AND the size of the history is governed by the changes recorded, not by the
+  number of tickets in the register
+
+#### Scenario: Reverting to the oldest retained change
+
+- WHEN the oldest entry the history still holds is reverted to
+- THEN the state from before that change is restored
+- AND the revert is reported as reaching the oldest state the history holds
+
+#### Scenario: A damaged entry
+
+- WHEN a revert would pass through a history entry that cannot be read
+- THEN nothing is reverted and the application says why
 
 ### Requirement: Feature freeze and scope after freeze
 
@@ -810,3 +829,20 @@ reload the file or to download its own copy first.
 - WHEN the user reloads the file after a refused write
 - THEN the tab shows the file's register, including its history, and saving
   resumes
+
+### Requirement: The durable register stays one transportable file
+
+The durable record SHALL remain a single file that can be exported, downloaded and
+re-imported as a unit, so that a register moves between machines or to another
+person by transferring one file. Keeping the history small SHALL NOT require
+splitting the durable record across several files.
+
+#### Scenario: Moving a register
+
+- WHEN the user downloads the register and re-imports it elsewhere
+- THEN the tickets, the decisions and the history all arrive together
+
+#### Scenario: A full history does not force a split
+
+- WHEN the history cap is reached
+- THEN the register is still one file

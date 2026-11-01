@@ -6,8 +6,9 @@ import { localStamp } from "./schema";
  *
  *  Nothing here is committed, so the History tab is the only way back, and it
  *  does both jobs: restore the state before one change ("undo that"), or jump to
- *  any earlier state in the window ("go back to last Tuesday"). The snapshots
- *  ride inside the store, so they travel with it wherever it is saved. */
+ *  any earlier state in the window ("go back to last Tuesday"). Each entry holds
+ *  only what its change touched, and a revert steps back from the current state;
+ *  the entries ride inside the store, so they travel with it wherever it is saved. */
 
 interface Props {
   store: Store;
@@ -55,13 +56,14 @@ export default function History({
       <div className="card">
         {items.length === 0 && (
           <div className="empty">
-            Nothing recorded yet. Every change records the state it is about to replace,
-            so the first one you make shows up here.
+            Nothing recorded yet. Every change records what it takes to undo it, so the
+            first one you make shows up here.
           </div>
         )}
         <ul className="log">
           {items.map((s) => (
-            <li key={s.index}>
+            <li key={s.index} title={s.index === 0 && store.history.length >= HISTORY_CAP
+              ? "The oldest change still held. Older ones were dropped at the cap." : undefined}>
               <span className="when mono small">{localStamp(s.at)}</span>
               <span className="what">
                 <b>{s.label}</b>

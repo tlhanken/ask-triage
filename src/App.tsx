@@ -5,7 +5,7 @@ import {
   deleteTicket,
   fillReleaseDates, load, moveTicketToSprint, readStore, recordDecision, removeProject,
   removeSprint, resetToSeed,
-  revertTo, save,
+  planRevert, revertTo, save,
   serialize, shiftSprint, stats, undoLast, updateTicket, updateSprint, withHistory,
 } from "./store";
 import {
@@ -269,7 +269,14 @@ export default function App() {
         {tab === "history" && (
           <History
             store={store}
-            onRevert={(i) => act("revert", (cur) => revertTo(cur, i))}
+            onRevert={(i) => {
+              const plan = planRevert(store, i);
+              if (!plan.ok) { setStatus(`⚠ ${plan.reason}`); return; }
+              setStore((cur) => revertTo(cur, i));
+              setStatus(plan.oldest
+                ? `reverted to before "${plan.label}" — the oldest state the history still holds`
+                : `reverted to before "${plan.label}"`);
+            }}
             onSaveFile={saveNow}
             onLoadFile={loadFromFile}
             onDownload={() => download("register.json", serialize(store), "application/json")}

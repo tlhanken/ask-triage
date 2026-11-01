@@ -77,34 +77,47 @@ If browsing versions as separate files on disk is wanted later, that is a
 deliberate EXPORT, and it can be added on top of this shape without changing what
 is stored.
 
-### Decision 2: One full baseline plus deltas
+### Decision 2: No baseline — the current register is the starting point
 
-Reverting needs to know a starting point. Keeping the oldest retained state whole
-one time — about 7.4KB, or 4% of the current file — means a revert walks back from
-the current state rather than replaying from the beginning of time, and a revert
-that runs past the oldest change has an honest answer to give.
+The first draft kept one full copy at the oldest end of the history, as the
+starting point for a revert. Working it through, that copy is never used:
+
+- A revert starts from the register as it is NOW and undoes each later change,
+  newest first. The current register is always complete, so it is the starting
+  point, and it is the only one needed.
+- Reverting "past the oldest change" is not something the history can be asked
+  for. The oldest state it can reach is the one before its oldest entry, and the
+  walk gets there exactly. A baseline would only be a second, redundant copy of
+  that same state.
+- Its other job, making a corrupt record fail rather than half-apply, is done by
+  checking every record before any of them is applied (Risks below). A baseline
+  does not help with that: the walk never reaches it before the corrupt record.
+
+So there is no baseline, and Open Question 2 (does it count toward the cap?)
+does not arise. The cap is 25 change records.
 
 ### Decision 3: A change record's shape
 
 Per entry: `at`, `label`, `op` (all already present), plus `tickets` — the
-before-state of only the tickets the change touched, keyed by id — and `settings`
-only when settings changed. Written as structured JSON rather than an escaped
-string, so the file reads as the change it was. Deliberately exclude ids the
-change did not touch: that omission is the whole saving, and it must be testable.
+before-state of only the tickets the change touched, keyed by id, with `null`
+for a ticket the change created — `settings` only when settings changed, and
+`order` (the ticket ids, in order) only when the change added, removed or
+reordered tickets, so a restored ticket goes back where it was. Written as
+structured JSON rather than an escaped string, so the file reads as the change
+it was. Ids the change did not touch are left out: that omission is the whole
+saving, and it is tested.
 
-### Decision 4: Convert on load, on every load path
+The record is computed by comparing the register before and after the change,
+not by each mutation declaring what it touched. A mutation that forgot one
+ticket would otherwise record a change that cannot be undone, and nothing
+would say so.
 
-One conversion function, called from all three entry points (localStorage,
-the file endpoint, the file picker) — the project's existing rule, because a
-migration that runs on one path presents as undefined values on the others.
-Legacy full-state entries convert exactly: consecutive full states already contain
-the information a delta needs, so nothing is invented. The oldest legacy entry
-becomes the baseline.
+### Decision 4: No conversion of the old format
 
-### Decision 5: The pre-conversion file is not recoverable, and that is new risk
-
-The register is untracked now, so once a converted file is saved the previous
-shape is gone with no commit to restore it. See Open Questions.
+The app is not in use yet, so there are no full-copy registers worth
+converting. The stored version moves from 3 to 4, and the existing safeguard
+refuses a version-3 register whole. The server keeps the replaced file when a
+save changes the format, so even a refused register is not lost.
 
 ## Risks / Trade-offs
 
@@ -117,30 +130,30 @@ shape is gone with no commit to restore it. See Open Questions.
 - **Ordering is now load-bearing.** Full states could be read in any order; deltas
   cannot. → The array order is the order, exactly as the sprint array already is;
   no separate ordering field.
-- **Conversion running twice must be a no-op** → the conversion is keyed off the
-  stored version, and asserted by a test for each shape.
 - **History gets smaller but the file is still rewritten whole on every save** →
   a consequence of Decision 1, and acceptable at this size; it is why the file
   must be kept small in the first place.
 
 ## Migration Plan
 
-1. Bump the stored version. The existing loader already refuses a save it cannot
-   read, so an older build degrades to a clean refusal rather than a partial load.
-2. Convert on load, in one function, called from every load path.
-3. On the first save after conversion, the file is rewritten in the new shape.
-4. Rollback: revert the code. The register then fails to load in the old build —
-   which is why Open Question 1 exists and should be settled before implementing.
+1. Bump the stored version to 4. The existing loader refuses a save it cannot
+   read, so an older register degrades to a clean refusal, not a partial load.
+2. No conversion runs. The first save in the new format replaces a version-3
+   file, and the server keeps the old file beside it.
+3. Rollback: revert the code, and restore the kept file if one was written.
 
-## Open Questions
+## Resolved questions
 
-1. **Should the first conversion keep a copy of the old file?** The register is
-   untracked, so a bad conversion would be unrecoverable. Keeping
-   `data/register.pre-delta.json` once, and never touching it again, is cheap
-   insurance; it also leaves a stray file nothing manages. Needs a decision.
-2. **Does the baseline count toward the cap of 25,** or is it held in addition? It
-   changes what "25 entries" means in the bounded-growth scenario.
-3. **Confirm Decision 1.** The `ADDED` requirement "stays one transportable file"
-   is the decision, not a detail. If per-state files are actually wanted, that
-   requirement is the one to overturn — and this document's reasoning is the case
-   against.
+1. **Keep a copy of the old file?** Yes, generalised: the server keeps the
+   replaced file whenever a save changes the format version (see
+   `file-is-source-of-truth`).
+2. **Does the baseline count toward the cap?** There is no baseline
+   (Decision 2).
+3. **One file?** Confirmed. The `ADDED` requirement stands.
+
+## Measured
+
+On the seed register (14 tickets) with 25 single-ticket edits:
+
+    full copies (old)   ~190 KB of history, ~201 KB file
+    change records      ~19 KB of history, ~30 KB file

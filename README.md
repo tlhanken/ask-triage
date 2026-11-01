@@ -93,8 +93,9 @@ When a save changes the register's format version, the server first keeps the ol
 file beside it as `register.v<old>.<timestamp>.json` and never touches it again.
 Delete those copies once the new format is trusted.
 
-The file also carries the last 25 state snapshots, which is what the History tab
-reverts to.
+The file also carries the last 25 changes, which is what the History tab reverts
+with. Each records only what its change touched, and a revert steps back from the
+current register, so the history stays small however many tickets there are.
 
 ## The screens
 
@@ -126,10 +127,6 @@ reverts to.
 
 ## Not done yet
 
-- History is over 80% of the register file, stored as escaped JSON blobs, so the
-  file is 190KB and every save rewrites all of it. The fix is proposed in
-  `openspec/changes/shrink-register-history`: record each change as a delta
-  instead of a full copy, so history shrinks without becoming a second file.
 - The project view's switcher is still one chip per project, and projects cannot be
   renamed. See `openspec/changes/projects-page`.
 - Nothing ever reaches Done, Blocked has no way back, and the triage capacity
