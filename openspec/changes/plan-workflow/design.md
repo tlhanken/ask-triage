@@ -120,10 +120,47 @@ This replaces the editor's manual "record a carryover" button.
   live register has one. Option: clear them so the tickets land in Fill out.
   Decide this in the specs.
 
-## Open questions
+## Resolved questions (2026-11-01)
 
-1. How should the due-date state be stored: a `noHardDate` flag, or a sentinel
-   value?
-2. Should undo-last-decision remain as its own mechanism, or should History
-   revert cover it, given Accept no longer exists as a key?
-3. Should the existing never-chosen estimates of 2 be cleared by the migration?
+1. **How is "no hard date" stored?** A `noHardDate` flag beside `dueDate`.
+   A sentinel string in `dueDate` would have to be excluded from every date
+   comparison, and one missed comparison parses it as a date. Setting a date
+   clears the flag, so the two never disagree.
+2. **Undo-last-decision?** Dropped. History revert is the one undo, so the
+   decision log no longer carries a `prev` copy of the ticket for it.
+3. **Never-chosen estimates?** Trevor: clear all of them. The app is not in use
+   yet, so this is done in the seed rather than by a migration: every seed
+   ticket starts with no estimate, and so starts in Fill out.
+
+## Decisions made while specifying
+
+- **No migration code.** The stored version moves to 5 and older registers are
+  refused whole, as with `shrink-register-history`. The server keeps the old
+  file when a save changes the format.
+- **Priority is unset, not "Unclassified".** `priority` becomes `null` until
+  chosen, matching estimate, type and due date. "Unclassified" survives only as
+  the label for null.
+- **States.** `In Progress` and `Accepted-Backlog` go. Open work is `New`
+  (unscheduled) or `Committed` (has a ship release); `Blocked` and `Deferred`
+  return on a revisit day; `Won't Do` and `Done` are closed.
+- **Defer and Block take a ticket off the plan.** They clear its release. It
+  comes back through Fill out, and is scheduled again from there. Otherwise a
+  blocked ticket would sit in a release and come up at close-out as if it were
+  being worked.
+- **Accept is recorded, not keyed.** Completing the required fields on a Fill
+  out card records an Accept decision, so the summary export still has an
+  accepted group. Returned work gets an explicit "take it on" (`a`), which
+  records Accept too.
+- **Close-out choices are decisions.** Done and carry over are recorded in the
+  decision log, so the export can say what shipped and what slipped. Back to
+  backlog is recorded as an unschedule.
+- **"Starts too late" needs one stored date.** Progress through a span is
+  normal: once v0.23 ships, a ticket spanning v0.23–v0.24 has a shipped release
+  in its span and is fine. What matters is whether the span had already started
+  when the plan was made. So a ticket stores `planned`: the day its ship release
+  or estimate was last set by a person. Carry-over does not touch it. A ticket
+  starts too late when the first release in its span had shipped by that day,
+  or when there are not enough releases before its ship release to hold it.
+- **"Being worked on"** is derived: a scheduled ticket whose span includes the
+  current release, or whose ship release has shipped.
+- **Capacity per release** stays `commitTargetPerSprint`, now in span units.
