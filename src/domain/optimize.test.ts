@@ -4,7 +4,7 @@ import { findSprint, hasShipped, isFrozen, loadUnits, startsTooLate } from "./re
 import { type Sprint } from "./schema";
 import { revertTo, slippedIn, withHistory } from "./history";
 import { applyPlan, explainPlan, fillReleaseDates, optimizePlan } from "./optimize";
-import { freshStore, moveTicketToSprint, type Store, updateSprint, updateTicket } from "./store";
+import { addSprint, freshStore, moveTicketToSprint, type Store, updateSprint, updateTicket } from "./store";
 import { NOW, freezeClock, mk, readyStore } from "./test-fixtures";
 
 freezeClock();
@@ -120,6 +120,22 @@ describe("release dates and feature freeze", () => {
     expect(r.moves.every((m) => m.to === "v0.25")).toBe(true);
     // the dated ones cannot be shipped in time, and the proposal says so
     expect(r.moves.some((m) => m.warning)).toBe(true);
+  });
+
+  it("fills a dated release before an undated one", () => {
+    let s = addSprint(readyStore(), "v0.30");                     // no dates
+    s = { ...s, tickets: [s.tickets[0]] };
+    const [move] = optimizePlan(s, NOW).moves;
+    expect(move.to).not.toBe("v0.30");
+    expect(findSprint(s.settings, move.to)!.release).not.toBeNull();
+  });
+
+  it("names the frozen releases when that is why it proposes nothing", () => {
+    let s = readyStore();
+    for (const sp of s.settings.sprints) s = updateSprint(s, sp.name, { freeze: "2020-01-01" });
+    const r = optimizePlan(s, NOW);
+    expect(r.moves).toEqual([]);
+    expect(explainPlan(r)).toMatch(/Nothing to place — .*v0\.23.*frozen/);
   });
 
   it("proposes nothing when every eligible release is frozen", () => {

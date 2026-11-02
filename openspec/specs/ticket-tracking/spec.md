@@ -197,11 +197,7 @@ database or a network service. When a development or preview server is present,
 the register SHALL additionally be written to a JSON file on the user's machine
 outside version control, so that no real ask is ever committed. While the server
 is present, that file SHALL be the source of truth: browser storage SHALL be a
-cache of it. That file SHALL NOT be the only way to recover an earlier state:
-the application SHALL keep its own snapshots of the register and SHALL revert
-from them. When no such server is present, the application SHALL offer a
-file-based alternative and a download. A save produced by an incompatible
-earlier model SHALL NOT be loaded partially.
+cache of it.
 
 #### Scenario: Both layers
 
@@ -408,11 +404,7 @@ frozen release SHALL be permitted and SHALL be reported as scope after freeze.
 Auto-optimize SHALL reason from release dates: it SHALL NOT propose a release
 that has already shipped, SHALL NOT propose a frozen release, SHALL fill releases
 in release-date order, and SHALL prefer the earliest release that ships on or
-before the ticket's due date. When no release ships in time it SHALL say so. A
-release with no release date SHALL remain usable, SHALL be considered after every
-dated release, and SHALL mark any dated ticket placed into it as uncertain.
-Auto-optimize SHALL state the reason whenever it proposes nothing, and SHALL
-state what limited it whenever it places fewer tickets than it considered.
+before the ticket's due date. When no release ships in time it SHALL say so.
 
 #### Scenario: Shipped and frozen releases are skipped
 
@@ -1124,3 +1116,57 @@ their own editors.
 
 - WHEN the settings are saved unchanged
 - THEN no history entry is recorded
+
+### Requirement: The application keeps its own history
+
+The register file SHALL NOT be the only way to recover an earlier state. The
+application SHALL keep its own history of the register, inside the register, and
+SHALL revert from it.
+
+#### Scenario: Reverting with no file at all
+
+- WHEN the application runs from a static build, with no register file, and a
+  change is made
+- THEN the change can be reverted from History
+
+### Requirement: Working without a server
+
+When no development or preview server is present, the application SHALL offer a
+file-based alternative to the register file, and a download of the register.
+
+#### Scenario: Keeping a copy from a static build
+
+- WHEN the application runs with no server and the register is downloaded
+- THEN the download holds the whole register, history included
+
+### Requirement: An incompatible save is refused whole
+
+A save produced by an incompatible earlier model SHALL NOT be loaded partially:
+it SHALL be refused whole, from every load path.
+
+#### Scenario: An older format in browser storage
+
+- WHEN browser storage holds a register in an earlier stored format
+- THEN none of it is loaded, and the application starts from the seed data
+
+### Requirement: Releases with no date stay usable
+
+A release with no release date SHALL remain usable for auto-optimize, SHALL be
+considered after every dated release, and SHALL mark any dated ticket placed into
+it as uncertain.
+
+#### Scenario: Dated releases are filled first
+
+- WHEN a dated release and an undated one both have room for a ticket
+- THEN auto-optimize proposes the dated one
+
+### Requirement: Auto-optimize explains itself
+
+Auto-optimize SHALL state the reason whenever it proposes nothing, and SHALL
+state what limited it whenever it places fewer tickets than it considered.
+
+#### Scenario: Every release is frozen
+
+- WHEN every release that has not shipped is frozen
+- THEN auto-optimize proposes nothing
+- AND it names the frozen releases as the reason

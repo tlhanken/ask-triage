@@ -338,6 +338,13 @@ describe("projects page", () => {
     expect(screen.getByRole("button", { name: /Aurora ✕/ })).toBeTruthy();
   });
 
+  it("refuses a register in an older format whole, starting from the seed", () => {
+    const s = freshStore();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, version: 4, tickets: [{ ...s.tickets[0], name: "From an old save" }] }));
+    expect(load().tickets.some((t) => t.name === "From an old save")).toBe(false);
+    expect(load().tickets).toHaveLength(s.tickets.length);
+  });
+
   it("keeps a project name the tickets still carry when the list has forgotten it", () => {
     const s = freshStore();
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, settings: { ...s.settings, projects: ["Atlas"] } }));
