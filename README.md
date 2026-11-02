@@ -51,11 +51,12 @@ A variable set in the shell wins over the file, for a one-off:
 read and edit the register. Only expose it on a network you trust, such as a
 tailnet.
 
-The planning settings (release capacity, sprint length, scoring weights) are not
-in this file. They are stored inside the register itself, so they travel with
-your data. Releases and projects are edited in the app. Capacity, sprint length
-and weights have no editor yet; a new register takes them from
-`DEFAULT_SETTINGS` in `src/domain/schema.ts`.
+The planning settings (release capacity, sprint length, throughput, flag
+thresholds, scoring weights) are not in this file. They are stored inside the
+register itself, so they travel with your data, and are edited in the app under
+**Settings** in the header; each one says what it drives. A new register takes
+them from `DEFAULT_SETTINGS` in `src/domain/schema.ts`. Releases are edited on
+Schedule and projects on Projects.
 
 ## Changing the code
 
@@ -144,8 +145,6 @@ current register, so the history stays small however many tickets there are.
 
 ## Not done yet
 
-- Capacity, sprint length and scoring weights have no editor; they come from
-  `DEFAULT_SETTINGS` in `src/domain/schema.ts` when a register is created.
 - Capacity is one number per release. Type is required so that per-team capacity
   (Driver, Server, …) can be added without another migration.
 - A register larger than about 60KB is not flushed when a tab closes (browsers cap

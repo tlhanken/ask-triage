@@ -27,6 +27,7 @@ writes.
         history.ts          change records, withHistory, revert
         decisions.ts        accept/defer/decline/block, close-out, revisits
         optimize.ts         auto-optimize; the release-date repair
+        settings.ts         the editable planning settings: what each drives, its rule
         pipeline.ts         the Plan page's queues and the header counts
         seed.ts             demo tickets for a fresh register
         exporters.ts        markdown, CSV and JSON text
@@ -38,7 +39,7 @@ writes.
         Schedule.tsx        the release board
         Projects.tsx        project list and due-date table
         Register.tsx, Decisions.tsx, History.tsx
-        TicketForm.tsx, SprintForm.tsx    the editors
+        TicketForm.tsx, SprintForm.tsx, SettingsForm.tsx    the editors
         fields.tsx          the four required-field controls, shared
         persist.ts          browser storage, and the client side of the file endpoint
         download.ts         clipboard and file download
@@ -61,6 +62,7 @@ Imports only point down this list. Nothing imports upward, and there are no cycl
     decisions    → assess, releases, dates, store, schema
     optimize     → assess, releases, dates, store, schema
     history      → releases, dates, store, schema
+    settings     → store, schema
     store        → releases, dates, seed, schema
     assess       → releases, dates, schema
     releases     → dates, schema
@@ -172,6 +174,11 @@ Projects fit column if its kind is in `FIT_KINDS` (ui/Projects.tsx).
 **Add a decision.** Add it to `DECISIONS` (schema.ts), handle it in
 `applyToTicket` (decisions.ts), add a section in `decisionsToMarkdown`
 (exporters.ts), then add the button in the screen that offers it.
+
+**Add a planning setting.** Add the field to `Settings` and its default to
+`DEFAULT_SETTINGS` (schema.ts), then one entry in `SETTING_FIELDS`
+(domain/settings.ts) with what it drives and its rule. The dialog renders from
+that list, so it needs no change. A setting that drives nothing does not belong.
 
 **Add a screen or tab.** A component in src/ui, an entry in `TABS` (ui/App.tsx),
 and its mutations wired through `act`. Read-only views need no `act`.

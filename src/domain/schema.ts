@@ -161,7 +161,6 @@ export interface Settings {
   sprintLengthDays: number;
   commitTargetPerSprint: number;
   throughputPerWeek: number;
-  intakePerWeek: number;
   /** The controlled project list. Data, not a compile-time union. */
   projects: string[];
   sprints: Sprint[],             // the release columns, in display order
@@ -184,7 +183,6 @@ export const DEFAULT_SETTINGS: Settings = {
   sprintLengthDays: 14,
   commitTargetPerSprint: 8,
   throughputPerWeek: 5,
-  intakePerWeek: 7.5,
   projects: [...DEFAULT_PROJECTS],
   sprints: [],                   // freshStore() fills dated defaults; see defaultSprints()
   weights: {

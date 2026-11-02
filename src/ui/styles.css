@@ -347,3 +347,15 @@ table.pdates .due-field label { flex-direction: row; align-items: center; gap: 4
 .projects button.pick { border-color: var(--accent); }
 .projects button.danger { border-color: #7a2f2a; color: #ffd7d5; }
 .projects button:disabled { opacity: .45; cursor: default; }
+
+/* ---------------------------------------------------------------- Settings */
+.settings-group { border: 1px solid var(--line); border-radius: 10px; margin: 14px 0 0; padding: 8px 14px 12px; }
+.settings-group legend { padding: 0 6px; color: var(--dim); font-size: 12px; }
+.setting { display: grid; grid-template-columns: 190px 170px 1fr; gap: 4px 12px; align-items: center; padding: 6px 0; }
+.setting label { font-size: 13px; }
+.setting-input { display: flex; align-items: center; gap: 6px; }
+.setting-input input {
+  width: 90px; background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; font: inherit;
+}
+@media (max-width: 700px) { .setting { grid-template-columns: 1fr; } }

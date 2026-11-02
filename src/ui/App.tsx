@@ -18,6 +18,8 @@ import DecisionLog from "./Decisions";
 import History from "./History";
 import TicketForm from "./TicketForm";
 import SprintForm from "./SprintForm";
+import SettingsForm from "./SettingsForm";
+import { settingValues, updateSettings } from "../domain/settings";
 
 const TABS = [
   ["plan", "Plan"], ["projects", "Projects"], ["register", "Register"], ["decisions", "Decisions"],
@@ -31,6 +33,7 @@ export default function App() {
   const [step, setStep] = useState<Step>("fill");
   const [editing, setEditing] = useState<{ ticket: Ticket } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingSettings, setEditingSettings] = useState(false);
   const [editingSprint, setEditingSprint] = useState<string | null>(null);
   /** True once the register file has been read (or found absent): autosave runs only then. */
   const [fileMode, setFileMode] = useState(false);
@@ -242,6 +245,7 @@ export default function App() {
           {p.nudges > 0 && <> · {p.nudges} would still help</>}
           {Number.isFinite(wait) && <> · queued {Math.round(wait)}w</>}
         </div>
+        <button className="dim" onClick={() => setEditingSettings(true)}>Settings</button>
         <button className="pick" onClick={() => setCreating(true)}>+ New ticket</button>
       </header>
 
@@ -309,6 +313,14 @@ export default function App() {
           />
         )}
       </main>
+
+      {editingSettings && (
+        <SettingsForm
+          values={settingValues(store.settings)}
+          onCancel={() => setEditingSettings(false)}
+          onSave={(values) => { act("edit settings", (cur) => updateSettings(cur, values)); setEditingSettings(false); }}
+        />
+      )}
 
       {creating && (
         <TicketForm

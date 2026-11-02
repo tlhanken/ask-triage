@@ -168,6 +168,5 @@ export function queueHealth(tickets: Ticket[], s: Settings) {
   return {
     open,
     avgWaitWeeks: s.throughputPerWeek > 0 ? open / s.throughputPerWeek : Infinity,
-    netGrowthPerWeek: s.intakePerWeek - s.throughputPerWeek,
   };
 }

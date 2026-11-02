@@ -489,6 +489,55 @@ describe("release dates and freeze", () => {
   });
 });
 
+describe("settings", () => {
+  const openSettings = () => fireEvent.click(screen.getByRole("button", { name: /^Settings$/ }));
+  const dialog = () => screen.getByRole("dialog", { name: "Settings" });
+
+  it("edits capacity, which every release is measured against, as one revertible change", () => {
+    openSchedule();
+    expect(colByTitle("v0.24")!.textContent).toMatch(/0\/8 units/);
+    openSettings();
+    expect(within(dialog()).getByText(/each ticket costs one unit in every release it spans/)).toBeTruthy();
+    fireEvent.change(within(dialog()).getByLabelText("Capacity per release"), { target: { value: "5" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save settings" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(colByTitle("v0.24")!.textContent).toMatch(/0\/5 units/);
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    expect(screen.getByText("edit settings")).toBeTruthy();
+  });
+
+  it("names an invalid value and will not save it", () => {
+    render(<App />);
+    openSettings();
+    fireEvent.change(within(dialog()).getByLabelText("Capacity per release"), { target: { value: "0" } });
+    expect(within(dialog()).getByText(/A whole number, 1 or more/)).toBeTruthy();
+    fireEvent.change(within(dialog()).getByLabelText("Critical"), { target: { value: "-3" } });
+    expect(within(dialog()).getByText(/0 or more/)).toBeTruthy();
+    expect(within(dialog()).getByRole("button", { name: "Save settings" })).toHaveProperty("disabled", true);
+  });
+
+  it("restores defaults into the form without saving them", () => {
+    const s = freshStore();
+    startWith({ ...s, settings: { ...s.settings, commitTargetPerSprint: 3 } });
+    openSettings();
+    const cap = within(dialog()).getByLabelText("Capacity per release") as HTMLInputElement;
+    expect(cap.value).toBe("3");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Restore defaults" }));
+    expect(cap.value).toBe("8");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Cancel" }));
+    openSettings();
+    expect((within(dialog()).getByLabelText("Capacity per release") as HTMLInputElement).value).toBe("3");
+  });
+
+  it("records nothing when saved unchanged", () => {
+    render(<App />);
+    openSettings();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: /^History$/ }));
+    expect(screen.getByText(/Nothing recorded yet/)).toBeTruthy();
+  });
+});
+
 describe("history tab", () => {
   it("records a labelled change and reverts it", () => {
     openSchedule();
