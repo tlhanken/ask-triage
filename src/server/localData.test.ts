@@ -57,15 +57,18 @@ class FakeReq {
   }
 }
 
+/** A response that can be awaited until the handler has answered. Waiting on the
+ *  answer, not on a timer, keeps these tests reliable on a slow or busy machine:
+ *  the handler finishes its file writes before it calls end(). */
 class FakeRes {
   statusCode = 200;
   body = "";
   headers: Record<string, string> = {};
+  private finish: () => void = () => {};
+  readonly done = new Promise<void>((r) => { this.finish = r; });
   setHeader(k: string, v: string) { this.headers[k] = v; }
-  end(body?: string) { this.body = body ?? ""; }
+  end(body?: string) { this.body = body ?? ""; this.finish(); }
 }
-
-const settle = async () => { await new Promise((r) => setTimeout(r, 25)); };
 
 describe("the data endpoint", () => {
   let dir: string;
@@ -91,7 +94,7 @@ describe("the data endpoint", () => {
     const req = new FakeReq("/__data", "POST", body, all);
     handler(req, res, () => { throw new Error("should not fall through"); });
     req.send();
-    await settle();
+    await res.done;
     return res;
   };
 
@@ -112,13 +115,13 @@ describe("the data endpoint", () => {
   it("serves the file back, and reports 204 when there is none", async () => {
     const empty = new FakeRes();
     handler(new FakeReq("/__data", "GET"), empty, () => { throw new Error("fell through"); });
-    await settle();
+    await empty.done;
     expect(empty.statusCode).toBe(204);
 
     await post(register(2));
     const res = new FakeRes();
     handler(new FakeReq("/__data", "GET"), res, () => { throw new Error("fell through"); });
-    await settle();
+    await res.done;
     expect(JSON.parse(res.body).tickets).toHaveLength(2);
   });
 
@@ -166,7 +169,7 @@ describe("the data endpoint", () => {
   const get = async (method = "GET") => {
     const res = new FakeRes();
     handler(new FakeReq("/__data", method), res, () => { throw new Error("fell through"); });
-    await settle();
+    await res.done;
     return res;
   };
 
