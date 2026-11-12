@@ -7,7 +7,7 @@ and step-by-step recipes for common changes. `README.md` covers using the app.
 
     npm run typecheck && npm run lint && npm test && npm run build
 
-All four must pass. CI runs the same.
+All four must pass. CI runs the same. `just check` runs the same four.
 
 ## Rules
 

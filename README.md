@@ -72,6 +72,20 @@ common changes. `AGENTS.md` is the short version for coding agents.
     npm run lint       # eslint, correctness rules only; it does not format
     npm run build      # typecheck, then vite build into dist/
 
+If you have [just](https://github.com/casey/just), the `justfile` wraps these with
+the server options as arguments. Run `just` on its own to list the recipes.
+
+    just dev                     # dev server
+    just serve                   # build, then serve the build: the one to leave running
+    just lan serve               # the same, open to other machines (e.g. Tailscale)
+    just port=8080 dev           # any option: port, host, data
+    just data=~/notes/reg.json serve
+    just config                  # the settings the server would use, and why
+    just check                   # typecheck, lint, test, build: what CI runs
+    just test src/domain         # some of the tests
+
+An option you leave out is not set, so `.env.local` still applies to it.
+
 ## Where the data lives
 
 Two layers, deliberately:

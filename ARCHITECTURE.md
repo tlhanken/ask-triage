@@ -52,6 +52,7 @@ writes.
       specs/ticket-tracking/spec.md      the live behavioural contract
       changes/archive/                    why each change was made
     vite.config.ts          wires the endpoint in; ASK_TRIAGE_* settings; test config
+    justfile                optional shortcuts over the npm scripts; options map to ASK_TRIAGE_*
 
 ## Layer rules
 
